@@ -1,0 +1,178 @@
+services:
+  # 1. Inference Container (Real-time Predictions)
+  # REASON: Alleen voor real-time inference, minimale footprint
+  qbn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: qbn:latest
+    container_name: QBN_v3.5_Inference
+    restart: unless-stopped
+    
+    # REASON: IPC host mode voor CUDA multiprocessing support
+    ipc: host
+    shm_size: '16gb'  # Shared memory voor multiprocessing
+    
+    # Environment variables laden
+    env_file:
+      - .env.local
+    
+    # GPU ondersteuning
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # REASON: Voorkom CUDA multiprocessing errors in Docker
+      - CUDA_LAUNCH_BLOCKING=0
+      - CUPY_CACHE_IN_MEMORY=1
+      # PyTorch CUDA settings
+      - TORCH_CUDA_ARCH_LIST=8.9  # Ada Lovelace (RTX 40xx/50xx)
+      # Real-time settings
+      - START_INFERENCE_LOOP=true
+      - QBN_ROLE=inference
+    
+    # Volumes voor development
+    # REASON: kfl_backend_config is nu lokaal in ./kfl_backend_config (geen Samba mount meer)
+    volumes:
+      - .:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # REASON: Toegang tot docker socket voor orchestratie van andere containers (KFL GPU)
+      - /var/run/docker.sock:/var/run/docker.sock
+    
+    # Network configuratie
+    networks:
+      - qbn-network
+    
+    # PostgreSQL server toevoegen aan hosts
+    extra_hosts:
+      - "postgres-server:10.10.10.3"
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 75G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    
+    # Port mapping voor FastAPI
+    ports:
+      - "8082:8081"
+    
+    # Logging configuratie
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    
+    # Interactive terminal
+    stdin_open: true
+    tty: true
+
+  # 2. Training Container (CPT Generation, Alpha Analysis, Threshold Optimization)
+  # REASON: Alle model training en data preparatie taken
+  qbn-training:
+    image: qbn:latest  # Hergebruikt dezelfde image
+    container_name: QBN_v3.5_Training
+    restart: "no"  # Draait alleen on-demand
+    
+    ipc: host
+    shm_size: '16gb'
+    
+    env_file:
+      - .env.local
+    
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_LAUNCH_BLOCKING=0
+      - CUPY_CACHE_IN_MEMORY=1
+      - TORCH_CUDA_ARCH_LIST=8.9
+      # Training settings
+      - START_INFERENCE_LOOP=false
+      - QBN_ROLE=training
+    
+    volumes:
+      - .:/app
+      # REASON: Toegang tot docker socket voor orchestratie van andere containers (KFL GPU)
+      - /var/run/docker.sock:/var/run/docker.sock
+    
+    networks:
+      - qbn-network
+    
+    extra_hosts:
+      - "postgres-server:10.10.10.3"
+    
+    deploy:
+      resources:
+        limits:
+          memory: 75G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    
+    stdin_open: true
+    tty: true
+    # Standaard commando opent interactive menu
+    command: /bin/bash
+
+  # 3. Validation Container (Walk-Forward, Backtesting, Quality Checks)
+  # REASON: Model validatie en quality assurance
+  qbn-validation:
+    image: qbn:latest  # Hergebruikt dezelfde image
+    container_name: QBN_v3.5_Validation
+    restart: "no"  # Draait alleen on-demand
+    
+    ipc: host
+    shm_size: '16gb'
+    
+    env_file:
+      - .env.local
+    
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_LAUNCH_BLOCKING=0
+      - CUPY_CACHE_IN_MEMORY=1
+      - TORCH_CUDA_ARCH_LIST=8.9
+      # Validation settings
+      - START_INFERENCE_LOOP=false
+      - QBN_ROLE=validation
+    
+    volumes:
+      - .:/app
+      # REASON: Toegang tot docker socket voor orchestratie van andere containers (KFL GPU)
+      - /var/run/docker.sock:/var/run/docker.sock
+    
+    networks:
+      - qbn-network
+    
+    extra_hosts:
+      - "postgres-server:10.10.10.3"
+    
+    deploy:
+      resources:
+        limits:
+          memory: 75G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    
+    stdin_open: true
+    tty: true
+    # Standaard commando opent interactive menu
+    command: /bin/bash
+
+networks:
+  qbn-network:
+    driver: bridge

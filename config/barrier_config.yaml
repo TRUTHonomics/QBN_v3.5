@@ -1,0 +1,30 @@
+# Barrier Configuration
+# Alle levels in ATR units
+
+default:
+  up_barriers: [0.25, 0.50, 0.75, 1.00, 1.25, 1.50]
+  down_barriers: [0.25, 0.50, 0.75, 1.00, 1.25, 1.50]
+  significant_threshold: 0.75
+  max_observation_min: 2880  # 48h
+
+trend_following:
+  up_barriers: [0.50, 0.75, 1.00, 1.50, 2.00]
+  down_barriers: [0.25, 0.50, 0.75]
+  significant_threshold: 0.50
+  max_observation_min: 1440  # 24h
+
+scalping:
+  up_barriers: [0.15, 0.25, 0.35, 0.50]
+  down_barriers: [0.15, 0.25, 0.35, 0.50]
+  significant_threshold: 0.25
+  max_observation_min: 240  # 4h
+
+# Asset-specifieke overrides
+asset_overrides:
+  1:  # BTC
+    config: default
+    significant_threshold: 0.75
+  
+  2:  # ETH
+    config: default
+    significant_threshold: 0.60  # Meer volatiel

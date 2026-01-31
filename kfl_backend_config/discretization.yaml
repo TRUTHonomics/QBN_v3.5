@@ -1,0 +1,106 @@
+# =============================================================================
+# Discretization Thresholds Configuration (Merged with QBN v3 Optimal results)
+# =============================================================================
+
+metadata:
+  version: 2
+  description: Discretization thresholds voor 8 indicator-families
+  updated: '2025-01-14'
+  last_threshold_update: '2026-01-06T22:08:26.599995'
+  optimized_asset_id: 1
+rsi:
+  extreme_oversold: 20
+  oversold: 30
+  overbought: 70
+  extreme_overbought: 80
+macd:
+  histogram_strong_threshold: 0.001
+  signal_ratio_strong: 1.1
+bollinger:
+  lower_zone: 0.25
+  upper_zone: 0.75
+keltner:
+  lower_zone: 0.25
+  upper_zone: 0.75
+atr:
+  extreme_expansion: 2.0
+  expansion: 1.5
+  contraction: 0.75
+  extreme_squeeze: 0.5
+adx:
+  non_trending: 25
+  strong_trend: 40
+stochastic:
+  extreme_oversold: 10
+  oversold: 20
+  overbought: 80
+  extreme_overbought: 90
+cmf:
+  strong_buying: 0.15
+  bullish_bias: 0.05
+  bearish_bias: -0.05
+  strong_selling: -0.15
+horizons:
+  1h:
+    composite_thresholds:
+      neutral_band: 0.001
+      strong_threshold: 0.12
+      source: MI Grid Search
+      mi_score: 0.012789049519564263
+    alignment_thresholds:
+      high_threshold: 0.17
+      low_threshold: -0.2
+      source: CART Analysis
+      feature_importance:
+        leading_score: 0.9180006740129876
+        coincident_score: 0.0
+        confirming_score: 0.08199932598701237
+    signal_weights:
+      leading:
+        leading_score: 2.6573
+      coincident:
+        coincident_score: 0.3653
+      confirming:
+        confirming_score: 0.0203
+  4h:
+    composite_thresholds:
+      neutral_band: 0.001
+      strong_threshold: 0.25
+      source: MI Grid Search
+      mi_score: 0.017893693938944265
+    alignment_thresholds:
+      high_threshold: 0.17
+      low_threshold: -0.2
+      source: CART Analysis
+      feature_importance:
+        leading_score: 0.7675723591009338
+        coincident_score: 0.04601802630598247
+        confirming_score: 0.18640961459308375
+    signal_weights:
+      leading:
+        leading_score: 2.8067
+      coincident:
+        coincident_score: -0.6478
+      confirming:
+        confirming_score: 0.1544
+  1d:
+    composite_thresholds:
+      neutral_band: 0.001
+      strong_threshold: 0.12
+      source: MI Grid Search
+      mi_score: 0.020262313107412423
+    alignment_thresholds:
+      high_threshold: 0.17
+      low_threshold: -0.2
+      source: CART Analysis
+      feature_importance:
+        leading_score: 0.5408728793330148
+        coincident_score: 0.1439498106719433
+        confirming_score: 0.31517730999504184
+    signal_weights:
+      leading:
+        leading_score: 1.3726
+      coincident:
+        coincident_score: 0.5727
+      confirming:
+        confirming_score: -0.4384

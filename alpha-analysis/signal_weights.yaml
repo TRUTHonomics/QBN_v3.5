@@ -1,0 +1,96 @@
+adx_peak_reversal_60:
+  1h: 0.02132625379685604
+adx_trend_exhaustion_60:
+  1h: 0.0642257739334901
+ao_saucer_bearish_60:
+  1h: 0.17390174564104105
+ao_saucer_bullish_60:
+  1h: 0.017994405039645917
+ao_twin_peaks_bearish_60:
+  1h: 0.0
+ao_twin_peaks_bullish_60:
+  1h: 0.0
+bb_mean_reversion_long_60:
+  1h: 1.0745203398065604
+bb_squeeze_60:
+  1h: 2.5
+cmf_divergence_bearish_60:
+  1h: 0.07197866922040368
+cmf_divergence_bullish_60:
+  1h: 0.7860640230436096
+ichi_6_20_52_kumo_breakout_long_60:
+  1h: 0.08869858355833878
+ichi_6_20_52_kumo_breakout_short_60:
+  1h: 0.10822886732310667
+ichi_6_20_52_tk_cross_bear_60:
+  1h: 1.0047973487724136
+ichi_6_20_52_tk_cross_bull_60:
+  1h: 0.8943007303935655
+ichimoku_kumo_twist_bear_60:
+  1h: 0.003636395859700952
+ichimoku_kumo_twist_bull_60:
+  1h: 0.005046531328209173
+kc_dynamic_resistance_60:
+  1h: 1.057619108608941
+kc_dynamic_support_60:
+  1h: 0.4687716953765422
+kc_mean_reversion_long_60:
+  1h: 1.2459711397245798
+kc_mean_reversion_short_60:
+  1h: 1.6582425473583222
+kc_pullback_long_60:
+  1h: 2.5
+kc_pullback_short_60:
+  1h: 2.5
+kc_squeeze_60:
+  1h: 2.5
+macd_6_13_4_bearish_cross_60:
+  1h: 0.042886359359008544
+macd_6_13_4_bullish_cross_60:
+  1h: 0.0038473736969804836
+macd_8_24_9_bearish_cross_60:
+  1h: 0.010386753250102701
+macd_8_24_9_bullish_cross_60:
+  1h: 0.06001095887022856
+macd_divergence_bearish_60:
+  1h: 0.09103503856420823
+macd_divergence_bullish_60:
+  1h: 0.4189330001895545
+mean_reversion_setup_long_60:
+  1h: 0.9015259853379052
+mean_reversion_setup_short_60:
+  1h: 1.4536406700151088
+obv_bearish_divergence_60:
+  1h: 0.021057034434916858
+obv_bullish_divergence_60:
+  1h: 0.1617355087434286
+rsi_divergence_bearish_60:
+  1h: 0.09214810857529321
+rsi_divergence_bullish_60:
+  1h: 0.44592066407559305
+rsi_extreme_overbought_60:
+  1h: 1.4092606533684167
+rsi_extreme_oversold_60:
+  1h: 0.516776546782255
+rsi_overbought_60:
+  1h: 2.1580624835181004
+rsi_oversold_60:
+  1h: 1.339669808419812
+stoch_divergence_bear_60:
+  1h: 1.1877934573739306
+stoch_divergence_bull_60:
+  1h: 1.9205022325512864
+stoch_hidden_divergence_bear_60:
+  1h: 0.8131979167516172
+stoch_hidden_divergence_bull_60:
+  1h: 1.1482593309483742
+stoch_overbought_60:
+  1h: 2.5
+stoch_oversold_60:
+  1h: 2.5
+vpvr_hvn_resistance_60:
+  1h: 1.7686948131073865
+vpvr_hvn_support_60:
+  1h: 2.5
+vpvr_poc_touch_60:
+  1h: 2.5

@@ -1,0 +1,75 @@
+# =============================================================================
+# Discretization Thresholds Configuration (Merged with QBN v3 Optimal results)
+# =============================================================================
+
+horizons:
+  1h:
+    composite_thresholds:
+      neutral_band: 0.001
+      strong_threshold: 0.12
+      source: MI Grid Search
+      mi_score: 0.012734714857019429
+    alignment_thresholds:
+      high_threshold: 0.17
+      low_threshold: -0.2
+      source: CART Analysis
+      feature_importance:
+        leading_score: 0.9183126634008666
+        coincident_score: 0.0
+        confirming_score: 0.08168733659913342
+    signal_weights:
+      leading:
+        leading_score: 2.6447
+      coincident:
+        coincident_score: 0.3616
+      confirming:
+        confirming_score: 0.0223
+  4h:
+    composite_thresholds:
+      neutral_band: 0.001
+      strong_threshold: 0.25
+      source: MI Grid Search
+      mi_score: 0.018250071276096715
+    alignment_thresholds:
+      high_threshold: 0.17
+      low_threshold: -0.2
+      source: CART Analysis
+      feature_importance:
+        leading_score: 0.7712190339644496
+        coincident_score: 0.045296026206727874
+        confirming_score: 0.1834849398288225
+    signal_weights:
+      leading:
+        leading_score: 2.8182
+      coincident:
+        coincident_score: -0.6459
+      confirming:
+        confirming_score: 0.1528
+  1d:
+    composite_thresholds:
+      neutral_band: 0.001
+      strong_threshold: 0.12
+      source: MI Grid Search
+      mi_score: 0.020262313107412423
+    alignment_thresholds:
+      high_threshold: 0.17
+      low_threshold: -0.2
+      source: CART Analysis
+      feature_importance:
+        leading_score: 0.5408728793330148
+        coincident_score: 0.1439498106719433
+        confirming_score: 0.31517730999504184
+    signal_weights:
+      leading:
+        leading_score: 1.3726
+      coincident:
+        coincident_score: 0.5727
+      confirming:
+        confirming_score: -0.4384
+metadata:
+  asset_id: 1
+  lookback_days: 365
+  analysis_timestamp: '2026-01-06T17:41:04.998964'
+  samples_used: 8716
+  last_threshold_update: '2026-01-06T18:28:12.451531'
+  optimized_asset_id: 1

@@ -1,0 +1,55 @@
+# QBN .dockerignore
+# ==================
+
+# Git
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files (rebuild in container)
+.env.local
+
+# Logs (create fresh in container)
+_log/*.log
+
+# pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Model artifacts (mount as volume if needed)
+*.pkl
+*.pickle
+*.pt
+*.pth
+models/
+
+# Documentation (not needed in container)
+.docs/
+
+# GPU cache
+.cupy/
+.cache/
+

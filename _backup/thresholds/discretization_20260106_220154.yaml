@@ -1,0 +1,109 @@
+# =============================================================================
+# Discretization Thresholds Configuration
+# =============================================================================
+# 
+# Configuratie voor het discretiseren van indicator waarden naar signals (-2 tot +2).
+# Deze thresholds kunnen worden aangepast zonder code wijzigingen.
+#
+# Signal mapping:
+#   +2: Strong Bullish
+#   +1: Bullish
+#    0: Neutral
+#   -1: Bearish
+#   -2: Strong Bearish
+#
+# =============================================================================
+
+metadata:
+  version: 2
+  description: "Discretization thresholds voor 8 indicator-families"
+  updated: "2025-01-14"
+
+# =============================================================================
+# RSI Thresholds
+# =============================================================================
+# RSI meet momentum en oversold/overbought condities.
+# Lage RSI = oversold = bullish reversal verwacht
+# Hoge RSI = overbought = bearish reversal verwacht
+rsi:
+  extreme_oversold: 20    # +2: RSI < 20
+  oversold: 30            # +1: 20 <= RSI < 30
+  overbought: 70          # -1: 70 < RSI <= 80
+  extreme_overbought: 80  # -2: RSI > 80
+
+# =============================================================================
+# MACD Thresholds
+# =============================================================================
+# MACD histogram meet momentum richting en sterkte.
+# Positief histogram = bullish, negatief = bearish
+macd:
+  histogram_strong_threshold: 0.001  # Minimale afstand voor "strong"
+  signal_ratio_strong: 1.1           # MACD/Signal ratio voor ±2
+
+# =============================================================================
+# Bollinger Bands Thresholds
+# =============================================================================
+# BB positie meet prijs t.o.v. volatiliteitsbanden.
+# Onder lower band = oversold (bullish), boven upper = overbought (bearish)
+bollinger:
+  lower_zone: 0.25  # +1: positie < 0.25 (dicht bij lower band)
+  upper_zone: 0.75  # -1: positie > 0.75 (dicht bij upper band)
+  # +2: positie < 0 (onder lower band)
+  # -2: positie > 1 (boven upper band)
+
+# =============================================================================
+# Keltner Channels Thresholds
+# =============================================================================
+# KC positie vergelijkbaar met BB, maar ATR-gebaseerd
+keltner:
+  lower_zone: 0.25  # +1: positie < 0.25
+  upper_zone: 0.75  # -1: positie > 0.75
+  # +2: positie < 0 (onder lower channel)
+  # -2: positie > 1 (boven upper channel)
+
+# =============================================================================
+# ATR Volatility Ratio Thresholds
+# =============================================================================
+# ATR meet volatiliteit (niet directioneel).
+# Hoge ratio = expansie (breakout verwacht)
+# Lage ratio = squeeze (consolidatie)
+atr:
+  extreme_expansion: 2.0  # +2: ratio > 2.0
+  expansion: 1.5          # +1: ratio > 1.5
+  contraction: 0.75       # -1: ratio < 0.75
+  extreme_squeeze: 0.5    # -2: ratio < 0.5
+
+# =============================================================================
+# ADX/DI Thresholds
+# =============================================================================
+# ADX meet trend sterkte, DI bepaalt richting.
+# ADX < 25 = ranging (neutraal)
+# ADX 25-40 = gematigde trend
+# ADX > 40 = sterke trend
+adx:
+  non_trending: 25    # 0: ADX < 25 (ranging regime)
+  strong_trend: 40    # ±2: ADX > 40 (sterke trend)
+  # Richting bepaald door DI+/DI- vergelijking
+
+# =============================================================================
+# Stochastic Thresholds
+# =============================================================================
+# Stochastic vergelijkbaar met RSI, maar meet position in range.
+# Lage K = oversold (bullish), hoge K = overbought (bearish)
+stochastic:
+  extreme_oversold: 10    # +2: K < 10
+  oversold: 20            # +1: 10 <= K < 20
+  overbought: 80          # -1: 80 < K <= 90
+  extreme_overbought: 90  # -2: K > 90
+
+# =============================================================================
+# CMF (Chaikin Money Flow) Thresholds
+# =============================================================================
+# CMF meet kapitaalstroom.
+# Positief = koopdruk (bullish), negatief = verkoopdruk (bearish)
+cmf:
+  strong_buying: 0.15     # +2: CMF > 0.15
+  bullish_bias: 0.05      # +1: 0.05 < CMF <= 0.15
+  bearish_bias: -0.05     # -1: -0.15 <= CMF < -0.05
+  strong_selling: -0.15   # -2: CMF < -0.15
+

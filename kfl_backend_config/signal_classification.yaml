@@ -1,0 +1,246 @@
+# Signal Classification voor QBN_v2
+# Semantische groepering: LEADING / COINCIDENT / CONFIRMING
+#
+# LEADING: Vroege momentum signalen (voorspellend)
+# COINCIDENT: Real-time trend signalen (bevestigend van huidige actie)
+# CONFIRMING: Late bevestiging signalen (trend validatie)
+
+metadata:
+  version: "2.0"
+  created_at: "2025-12-10"
+  last_updated: "2025-12-10"
+  total_signals: 125
+  description: "Semantische classificatie voor QBN_v2 Bayesian Network"
+  distribution:
+    LEADING: 48
+    COINCIDENT: 39
+    CONFIRMING: 38
+
+classifications:
+  LEADING:
+    description: "Vroege momentum signalen die potentiële bewegingen detecteren voordat ze volledig ontwikkelen"
+    count: 48
+    signals:
+      # RSI Extremen en Divergenties
+      - RSI_OVERSOLD
+      - RSI_OVERBOUGHT
+      - RSI_EXTREME_OVERSOLD
+      - RSI_EXTREME_OVERBOUGHT
+      - RSI_DIVERGENCE_BULLISH
+      - RSI_DIVERGENCE_BEARISH
+
+      # Fast MACD Varianten (NIEUW)
+      - MACD_6_13_4_BULLISH_CROSS
+      - MACD_6_13_4_BEARISH_CROSS
+      - MACD_8_24_9_BULLISH_CROSS
+      - MACD_8_24_9_BEARISH_CROSS
+
+      # MACD Divergenties
+      - MACD_DIVERGENCE_BULLISH
+      - MACD_DIVERGENCE_BEARISH
+
+      # Fast Ichimoku Varianten (NIEUW)
+      - ICHI_6_20_52_TK_CROSS_BULL
+      - ICHI_6_20_52_TK_CROSS_BEAR
+      - ICHI_6_20_52_KUMO_BREAKOUT_LONG
+      - ICHI_6_20_52_KUMO_BREAKOUT_SHORT
+
+      # Ichimoku Kumo Twist
+      - ICHIMOKU_KUMO_TWIST_BULL
+      - ICHIMOKU_KUMO_TWIST_BEAR
+
+      # Stochastic Extremen en Divergenties
+      - STOCH_OVERSOLD
+      - STOCH_OVERBOUGHT
+      - STOCH_DIVERGENCE_BULL
+      - STOCH_DIVERGENCE_BEAR
+      - STOCH_HIDDEN_DIVERGENCE_BULL
+      - STOCH_HIDDEN_DIVERGENCE_BEAR
+
+      # Keltner Channel Mean Reversion en Support/Resistance
+      - KC_MEAN_REVERSION_LONG
+      - KC_MEAN_REVERSION_SHORT
+      - KC_SQUEEZE
+      - KC_DYNAMIC_SUPPORT
+      - KC_DYNAMIC_RESISTANCE
+      - KC_PULLBACK_LONG
+      - KC_PULLBACK_SHORT
+
+      # Bollinger Bands Mean Reversion
+      - BB_SQUEEZE
+      - BB_MEAN_REVERSION_LONG
+
+      # OBV Divergenties
+      - OBV_BULLISH_DIVERGENCE
+      - OBV_BEARISH_DIVERGENCE
+
+      # CMF Divergenties
+      - CMF_DIVERGENCE_BULLISH
+      - CMF_DIVERGENCE_BEARISH
+
+      # Awesome Oscillator Patterns
+      - AO_TWIN_PEAKS_BULLISH
+      - AO_TWIN_PEAKS_BEARISH
+      - AO_SAUCER_BULLISH
+      - AO_SAUCER_BEARISH
+
+      # ADX Trend Exhaustion
+      - ADX_TREND_EXHAUSTION
+      - ADX_PEAK_REVERSAL
+
+      # Composite Mean Reversion
+      - MEAN_REVERSION_SETUP_LONG
+      - MEAN_REVERSION_SETUP_SHORT
+
+      # VPVR Support/Resistance
+      - VPVR_HVN_RESISTANCE
+      - VPVR_HVN_SUPPORT
+      - VPVR_POC_TOUCH
+
+  COINCIDENT:
+    description: "Real-time signalen die huidige prijsactie bevestigen en momentum tonen"
+    count: 39
+    signals:
+      # Standard MACD (12_26_9)
+      - MACD_BULLISH_CROSS
+      - MACD_BEARISH_CROSS
+      - MACD_HISTOGRAM_POSITIVE
+      - MACD_HISTOGRAM_NEGATIVE
+
+      # Standard Ichimoku (9_26_52)
+      - ICHIMOKU_TENKAN_KIJUN_CROSS_BULL
+      - ICHIMOKU_TENKAN_KIJUN_CROSS_BEAR
+      - ICHIMOKU_PRICE_ABOVE_KUMO
+      - ICHIMOKU_PRICE_BELOW_KUMO
+      - ICHIMOKU_PRICE_IN_KUMO
+
+      # Medium Ichimoku (7_22_44) (NIEUW)
+      - ICHI_7_22_44_TK_CROSS_BULL
+      - ICHI_7_22_44_TK_CROSS_BEAR
+
+      # Bollinger Bands Breakouts
+      - BB_BREAKOUT_LONG
+      - BB_BREAKOUT_SHORT
+
+      # CMF Flow
+      - CMF_BULLISH_BIAS
+      - CMF_BEARISH_BIAS
+      - CMF_STRONG_BUYING
+      - CMF_STRONG_SELLING
+
+      # RSI Center Cross
+      - RSI_CENTER_CROSS_BULL
+      - RSI_CENTER_CROSS_BEAR
+
+      # Stochastic Cross
+      - STOCH_BULLISH_CROSS
+
+      # ATR Volatility
+      - ATR_HIGH_VOLATILITY
+      - ATR_LOW_VOLATILITY
+
+      # Awesome Oscillator Zero Cross
+      - AO_BULLISH_ZERO_CROSS
+      - AO_BEARISH_ZERO_CROSS
+
+      # Directional Indicators Cross
+      - DI_BULLISH_CROSS
+      - DI_BEARISH_CROSS
+
+      # Supertrend Flips
+      - SUPER_TREND_FLIP_BULL
+      - SUPER_TREND_FLIP_BEAR
+
+      # Volatility Breakouts
+      - VOLATILITY_BREAKOUT_LONG
+      - VOLATILITY_BREAKOUT_SHORT
+
+      # Momentum Confluence
+      - MOMENTUM_BULLISH_CONFLUENCE
+      - MOMENTUM_BEARISH_CONFLUENCE
+
+      # Volume Confluence
+      - VOLUME_BULLISH_CONFLUENCE
+      - VOLUME_BEARISH_CONFLUENCE
+
+      # Risk Management
+      - RISK_HIGH_VOLATILITY
+      - RISK_LOW_LIQUIDITY
+
+      # Regime Volatile
+      - REGIME_VOLATILE
+
+      # VPVR Breakouts
+      - VPVR_LVN_BREAKOUT_UP
+      - VPVR_LVN_BREAKOUT_DOWN
+
+  CONFIRMING:
+    description: "Late bevestiging signalen voor trend validatie en sterke bevestiging"
+    count: 38
+    signals:
+      # ADX Trend Strength
+      - ADX_TREND_CONFIRM
+      - ADX_STRONG_TREND
+      - ADX_NON_TRENDING_REGIME
+      - ADX_WEAK_TREND
+
+      # Slow MACD Varianten (NIEUW)
+      - MACD_5_35_5_BULLISH_CROSS
+      - MACD_5_35_5_BEARISH_CROSS
+      - MACD_20_50_15_BULLISH_CROSS
+      - MACD_20_50_15_BEARISH_CROSS
+
+      # MACD Zero Line
+      - MACD_ZERO_LINE_CROSS_BULL
+      - MACD_ZERO_LINE_CROSS_BEAR
+
+      # Slow Ichimoku (10_30_60) (NIEUW)
+      - ICHI_10_30_60_TK_CROSS_BULL
+      - ICHI_10_30_60_TK_CROSS_BEAR
+      - ICHI_10_30_60_KUMO_BREAKOUT_LONG
+      - ICHI_10_30_60_KUMO_BREAKOUT_SHORT
+
+      # Standard Ichimoku Kumo Breakouts
+      - ICHIMOKU_KUMO_BREAKOUT_LONG
+      - ICHIMOKU_KUMO_BREAKOUT_SHORT
+
+      # Keltner Channel Trend Breakouts
+      - KC_TREND_BREAKOUT_LONG
+      - KC_TREND_BREAKOUT_SHORT
+
+      # OBV Trend Confirmation
+      - OBV_TREND_CONFIRM_BULL
+      - OBV_TREND_CONFIRM_BEAR
+      - OBV_TREND_STRENGTH_BULL
+      - OBV_TREND_STRENGTH_BEAR
+
+      # Directional Indicators Strong
+      - DI_STRONG_BULLISH
+      - DI_STRONG_BEARISH
+
+      # Supertrend Trend
+      - SUPER_TREND_BULLISH
+      - SUPER_TREND_BEARISH
+
+      # RSI Center Sustained
+      - RSI_CENTER_BULLISH
+      - RSI_CENTER_BEARISH
+
+      # Composite Confluence Signals
+      - BULLISH_CONFLUENCE_STRONG
+      - BEARISH_CONFLUENCE_STRONG
+      - TREND_FOLLOWING_BREAKOUT_LONG
+      - TREND_FOLLOWING_BREAKOUT_SHORT
+
+      # Multi-Timeframe Alignment
+      - MTF_BULLISH_ALIGNMENT
+      - MTF_BEARISH_ALIGNMENT
+
+      # Market Regime
+      - REGIME_TRENDING_BULLISH
+      - REGIME_TRENDING_BEARISH
+      - REGIME_RANGING
+
+      # VPVR Value Area
+      - VPVR_VALUE_AREA_INSIDE
+

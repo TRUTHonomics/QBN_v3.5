@@ -1,0 +1,1582 @@
+# packages/core/signals/signals.yaml
+# Master Signal Definitions voor KlineFuturesLab
+# Bevat alle 120+ indicatorvelden uit de Master Signaal Catalogus
+
+# =============================================================================
+# METADATA & CONFIGURATION
+# =============================================================================
+metadata:
+  version: 2
+  lookback_bars: 50
+  created_at: "2024-12-19T10:00:00Z"
+  last_updated: "2025-12-10T00:00:00Z"
+  description: "Master Signal Definitions voor KlineFuturesLab - bevat 125 signalen (PvA 1.2)"
+  changelog: "2025-12-10: Toegevoegd 8 MACD varianten en 10 Ichimoku varianten voor QBN_v2"
+
+# =============================================================================
+# YAML ANCHORS & ALIASES voor herbruikbare parameter sets
+# =============================================================================
+anchors:
+  adx_params_14: &adx_14 {length: 14}
+  adx_params_20: &adx_20 {length: 20}
+  cmf_params_20: &cmf_20 {length: 20}
+  kc_params_20: &kc_20 {length: 20, scalar: 2}
+  bb_params_20: &bb_20 {length: 20, std: 2}
+  rsi_params_14: &rsi_14 {length: 14}
+  macd_params: &macd_std {fast: 12, slow: 26, signal: 9}
+  atr_params_14: &atr_14 {length: 14}
+  stoch_params: &stoch_std {k: 14, d: 3}
+  ao_params: &ao_std {fast: 5, slow: 34}
+
+  # MACD Variant Parameters (Nieuw voor PvA 1.2)
+  macd_6_13_4: &macd_fast {fast: 6, slow: 13, signal: 4}
+  macd_8_24_9: &macd_med_fast {fast: 8, slow: 24, signal: 9}
+  macd_5_35_5: &macd_slow {fast: 5, slow: 35, signal: 5}
+  macd_20_50_15: &macd_swing {fast: 20, slow: 50, signal: 15}
+
+  # Ichimoku Variant Parameters (Nieuw voor PvA 1.2)
+  ichi_6_20_52: &ichi_intraday {tenkan: 6, kijun: 20, senkou_b: 52}
+  ichi_7_22_44: &ichi_crypto {tenkan: 7, kijun: 22, senkou_b: 44}
+  ichi_10_30_60: &ichi_swing {tenkan: 10, kijun: 30, senkou_b: 60}
+
+# =============================================================================
+# SIGNAL DEFINITIONS
+# =============================================================================
+signals:
+  # ADX (Average Directional Index) Signalen
+  # =============================================================================
+
+  - id: ADX_TREND_CONFIRM
+    name: ADX Trend Confirmation
+    indicator: ADX
+    parameters:
+      <<: *adx_14
+      threshold: 25
+    formula: "ADX_14 > 25"
+    classification: CONFIRMING
+    hypothesis: "Markt bevindt zich in trending regime"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ADX_NON_TRENDING_REGIME
+    name: ADX Non-Trending Regime
+    indicator: ADX
+    parameters:
+      <<: *adx_14
+      threshold: 20
+    formula: "ADX_14 < 20"
+    classification: CONFIRMING
+    hypothesis: "Markt bevindt zich in ranging regime"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ADX_STRONG_TREND
+    name: ADX Strong Trend
+    indicator: ADX
+    parameters:
+      <<: *adx_14
+      threshold: 30
+    formula: "ADX_14 > 30"
+    classification: CONFIRMING
+    hypothesis: "Zeer sterke trend aanwezig"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ADX_WEAK_TREND
+    name: ADX Weak Trend
+    indicator: ADX
+    parameters:
+      <<: *adx_14
+      threshold: 15
+    formula: "ADX_14 < 15"
+    classification: CONFIRMING
+    hypothesis: "Zeer zwakke trend - ranging markt"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# CMF (Chaikin Money Flow) Signalen
+# =============================================================================
+
+  - id: CMF_BULLISH_BIAS
+    name: CMF Bullish Bias
+    indicator: CMF
+    parameters:
+      <<: *cmf_20
+      threshold: 0.05
+    formula: "CMF_20 > 0.05"
+    classification: COINCIDENT
+    hypothesis: "Netto kapitaalstroom is positief"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: CMF_BEARISH_BIAS
+    name: CMF Bearish Bias
+    indicator: CMF
+    parameters:
+      <<: *cmf_20
+      threshold: -0.05
+    formula: "CMF_20 < -0.05"
+    classification: COINCIDENT
+    hypothesis: "Netto kapitaalstroom is negatief"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: CMF_STRONG_BUYING
+    name: CMF Strong Buying Pressure
+    indicator: CMF
+    parameters:
+      <<: *cmf_20
+      threshold: 0.15
+    formula: "CMF_20 > 0.15"
+    classification: COINCIDENT
+    hypothesis: "Zeer sterke koopdruk"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: CMF_STRONG_SELLING
+    name: CMF Strong Selling Pressure
+    indicator: CMF
+    parameters:
+      <<: *cmf_20
+      threshold: -0.15
+    formula: "CMF_20 < -0.15"
+    classification: COINCIDENT
+    hypothesis: "Zeer sterke verkoopdruk"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# KC (Keltner Channel) Signalen
+# =============================================================================
+
+  - id: KC_TREND_BREAKOUT_LONG
+    name: Keltner Channel Trend Breakout Long
+    indicator: KC
+    parameters: *kc_20
+    formula: "(Close > KC_upper) and (ADX_14 > 25)"
+    classification: CONFIRMING
+    hypothesis: "Uptrend versnelt met uitzonderlijke kracht"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["ADX_TREND_CONFIRM"]
+
+  - id: KC_TREND_BREAKOUT_SHORT
+    name: Keltner Channel Trend Breakout Short
+    indicator: KC
+    parameters: *kc_20
+    formula: "(Close < KC_lower) and (ADX_14 > 25)"
+    classification: CONFIRMING
+    hypothesis: "Downtrend versnelt met uitzonderlijke kracht"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["ADX_TREND_CONFIRM"]
+
+  - id: KC_MEAN_REVERSION_LONG
+    name: Keltner Channel Mean Reversion Long
+    indicator: KC
+    parameters: *kc_20
+    formula: "(Close <= KC_lower) and (ADX_14 < 20)"
+    classification: LEADING
+    hypothesis: "Prijs zal terugkeren naar gemiddelde vanuit oversold"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["ADX_NON_TRENDING_REGIME"]
+
+  - id: KC_MEAN_REVERSION_SHORT
+    name: Keltner Channel Mean Reversion Short
+    indicator: KC
+    parameters: *kc_20
+    formula: "(Close >= KC_upper) and (ADX_14 < 20)"
+    classification: LEADING
+    hypothesis: "Prijs zal terugkeren naar gemiddelde vanuit overbought"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["ADX_NON_TRENDING_REGIME"]
+
+  - id: KC_SQUEEZE
+    name: Keltner Channel Squeeze
+    indicator: KC
+    parameters: *kc_20
+    formula: "(KC_upper - KC_lower) < (KC_upper - KC_lower).rolling(20).mean() * 0.8"
+    classification: LEADING
+    hypothesis: "Volatiliteit neemt af - breakout verwacht"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Bollinger Bands Signalen
+# =============================================================================
+
+  - id: BB_SQUEEZE
+    name: Bollinger Bands Squeeze
+    indicator: BBANDS
+    parameters: *bb_20
+    formula: "(BB_upper - BB_lower) < (BB_upper - BB_lower).rolling(20).mean() * 0.8"
+    classification: LEADING
+    hypothesis: "Volatiliteit neemt af - breakout verwacht"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: BB_BREAKOUT_LONG
+    name: Bollinger Bands Breakout Long
+    indicator: BBANDS
+    parameters: *bb_20
+    formula: "Close > BB_upper"
+    classification: COINCIDENT
+    hypothesis: "Prijs breekt boven Bollinger Band uit"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: BB_BREAKOUT_SHORT
+    name: Bollinger Bands Breakout Short
+    indicator: BBANDS
+    parameters: *bb_20
+    formula: "Close < BB_lower"
+    classification: COINCIDENT
+    hypothesis: "Prijs breekt onder Bollinger Band uit"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: BB_MEAN_REVERSION_LONG
+    name: Bollinger Bands Mean Reversion Long
+    indicator: BBANDS
+    parameters: *bb_20
+    formula: "(Close <= BB_lower) and (ADX_14 < 20)"
+    classification: LEADING
+    hypothesis: "Prijs zal terugkeren naar gemiddelde vanuit oversold"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["ADX_NON_TRENDING_REGIME"]
+
+# =============================================================================
+# RSI (Relative Strength Index) Signalen
+# =============================================================================
+
+  - id: RSI_OVERSOLD
+    name: RSI Oversold
+    indicator: RSI
+    parameters:
+      <<: *rsi_14
+      threshold: 30
+    formula: "RSI_14 < 30"
+    classification: LEADING
+    hypothesis: "Prijs is oversold - mogelijke bounce"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: RSI_OVERBOUGHT
+    name: RSI Overbought
+    indicator: RSI
+    parameters:
+      <<: *rsi_14
+      threshold: 70
+    formula: "RSI_14 > 70"
+    classification: LEADING
+    hypothesis: "Prijs is overbought - mogelijke pullback"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: RSI_EXTREME_OVERSOLD
+    name: RSI Extreme Oversold
+    indicator: RSI
+    parameters:
+      <<: *rsi_14
+      threshold: 20
+    formula: "RSI_14 < 20"
+    classification: LEADING
+    hypothesis: "Extreme oversold conditie"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: RSI_EXTREME_OVERBOUGHT
+    name: RSI Extreme Overbought
+    indicator: RSI
+    parameters:
+      <<: *rsi_14
+      threshold: 80
+    formula: "RSI_14 > 80"
+    classification: LEADING
+    hypothesis: "Extreme overbought conditie"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: RSI_DIVERGENCE_BEARISH
+    name: RSI Bearish Divergence
+    indicator: RSI
+    parameters: *rsi_14
+    formula: "(Close > Close.shift(5)) and (RSI_14 < RSI_14.shift(5)) and (RSI_14 > 70)"
+    classification: LEADING
+    hypothesis: "Prijsmomentum neemt af - mogelijke top"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: RSI_DIVERGENCE_BULLISH
+    name: RSI Bullish Divergence
+    indicator: RSI
+    parameters: *rsi_14
+    formula: "(Close < Close.shift(5)) and (RSI_14 > RSI_14.shift(5)) and (RSI_14 < 30)"
+    classification: LEADING
+    hypothesis: "Prijsmomentum neemt toe - mogelijke bottom"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# MACD Signalen
+# =============================================================================
+
+  - id: MACD_BULLISH_CROSS
+    name: MACD Bullish Cross
+    indicator: MACD
+    parameters: *macd_std
+    formula: "(MACD_12_26_9 > MACDs_12_26_9) and (MACD_12_26_9.shift(1) <= MACDs_12_26_9.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "MACD kruist bullish boven signal line"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_BEARISH_CROSS
+    name: MACD Bearish Cross
+    indicator: MACD
+    parameters: *macd_std
+    formula: "(MACD_12_26_9 < MACDs_12_26_9) and (MACD_12_26_9.shift(1) >= MACDs_12_26_9.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "MACD kruist bearish onder signal line"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_HISTOGRAM_POSITIVE
+    name: MACD Histogram Positive
+    indicator: MACD
+    parameters: *macd_std
+    formula: "MACDh_12_26_9 > 0"
+    classification: COINCIDENT
+    hypothesis: "MACD histogram is positief"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_HISTOGRAM_NEGATIVE
+    name: MACD Histogram Negative
+    indicator: MACD
+    parameters: *macd_std
+    formula: "MACDh_12_26_9 < 0"
+    classification: COINCIDENT
+    hypothesis: "MACD histogram is negatief"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# MACD Variant Signalen (Nieuw voor PvA 1.2)
+# =============================================================================
+
+  # MACD 6_13_4 (LEADING - Fast)
+  - id: MACD_6_13_4_BULLISH_CROSS
+    name: MACD Fast Bullish Cross
+    indicator: MACD
+    parameters: *macd_fast
+    formula: "(MACD_6_13_4 > MACDs_6_13_4) and (MACD_6_13_4.shift(1) <= MACDs_6_13_4.shift(1))"
+    classification: LEADING
+    hypothesis: "Fast MACD kruist bullish - vroeg momentum signaal"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_6_13_4_BEARISH_CROSS
+    name: MACD Fast Bearish Cross
+    indicator: MACD
+    parameters: *macd_fast
+    formula: "(MACD_6_13_4 < MACDs_6_13_4) and (MACD_6_13_4.shift(1) >= MACDs_6_13_4.shift(1))"
+    classification: LEADING
+    hypothesis: "Fast MACD kruist bearish - vroeg momentum signaal"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  # MACD 8_24_9 (LEADING - Medium-Fast)
+  - id: MACD_8_24_9_BULLISH_CROSS
+    name: MACD Medium-Fast Bullish Cross
+    indicator: MACD
+    parameters: *macd_med_fast
+    formula: "(MACD_8_24_9 > MACDs_8_24_9) and (MACD_8_24_9.shift(1) <= MACDs_8_24_9.shift(1))"
+    classification: LEADING
+    hypothesis: "Medium-fast MACD kruist bullish"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_8_24_9_BEARISH_CROSS
+    name: MACD Medium-Fast Bearish Cross
+    indicator: MACD
+    parameters: *macd_med_fast
+    formula: "(MACD_8_24_9 < MACDs_8_24_9) and (MACD_8_24_9.shift(1) >= MACDs_8_24_9.shift(1))"
+    classification: LEADING
+    hypothesis: "Medium-fast MACD kruist bearish"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  # MACD 5_35_5 (CONFIRMING - Ultra-Slow)
+  - id: MACD_5_35_5_BULLISH_CROSS
+    name: MACD Ultra-Slow Bullish Cross
+    indicator: MACD
+    parameters: *macd_slow
+    formula: "(MACD_5_35_5 > MACDs_5_35_5) and (MACD_5_35_5.shift(1) <= MACDs_5_35_5.shift(1))"
+    classification: CONFIRMING
+    hypothesis: "Ultra-slow MACD kruist bullish - late trend bevestiging"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_5_35_5_BEARISH_CROSS
+    name: MACD Ultra-Slow Bearish Cross
+    indicator: MACD
+    parameters: *macd_slow
+    formula: "(MACD_5_35_5 < MACDs_5_35_5) and (MACD_5_35_5.shift(1) >= MACDs_5_35_5.shift(1))"
+    classification: CONFIRMING
+    hypothesis: "Ultra-slow MACD kruist bearish - late trend bevestiging"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  # MACD 20_50_15 (CONFIRMING - Swing)
+  - id: MACD_20_50_15_BULLISH_CROSS
+    name: MACD Swing Bullish Cross
+    indicator: MACD
+    parameters: *macd_swing
+    formula: "(MACD_20_50_15 > MACDs_20_50_15) and (MACD_20_50_15.shift(1) <= MACDs_20_50_15.shift(1))"
+    classification: CONFIRMING
+    hypothesis: "Swing MACD kruist bullish - grote trend bevestiging"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_20_50_15_BEARISH_CROSS
+    name: MACD Swing Bearish Cross
+    indicator: MACD
+    parameters: *macd_swing
+    formula: "(MACD_20_50_15 < MACDs_20_50_15) and (MACD_20_50_15.shift(1) >= MACDs_20_50_15.shift(1))"
+    classification: CONFIRMING
+    hypothesis: "Swing MACD kruist bearish - grote trend bevestiging"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# ATR (Average True Range) Signalen
+# =============================================================================
+
+  - id: ATR_HIGH_VOLATILITY
+    name: ATR High Volatility
+    indicator: ATR
+    parameters: *atr_14
+    formula: "ATR_14 > ATR_14.rolling(20).mean() * 1.5"
+    classification: COINCIDENT
+    hypothesis: "Hoge volatiliteit - breakout mogelijk"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ATR_LOW_VOLATILITY
+    name: ATR Low Volatility
+    indicator: ATR
+    parameters: *atr_14
+    formula: "ATR_14 < ATR_14.rolling(20).mean() * 0.7"
+    classification: COINCIDENT
+    hypothesis: "Lage volatiliteit - ranging markt"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# OBV (On Balance Volume) Signalen
+# =============================================================================
+
+  - id: OBV_BULLISH_DIVERGENCE
+    name: OBV Bullish Divergence
+    indicator: OBV
+    parameters: {}
+    formula: "(Close < Close.shift(5)) and (OBV > OBV.shift(5)) and (RSI_14 < 30)"
+    classification: LEADING
+    hypothesis: "Volume ondersteunt prijsstijging"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: OBV_BEARISH_DIVERGENCE
+    name: OBV Bearish Divergence
+    indicator: OBV
+    parameters: {}
+    formula: "(Close > Close.shift(5)) and (OBV < OBV.shift(5)) and (RSI_14 > 70)"
+    classification: LEADING
+    hypothesis: "Volume ondersteunt prijsdaling"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Stochastic Signalen
+# =============================================================================
+
+  - id: STOCH_OVERSOLD
+    name: Stochastic Oversold
+    indicator: STOCH
+    parameters:
+      <<: *stoch_std
+      threshold: 20
+    formula: "STOCHk_14_3_3 < 20"
+    classification: LEADING
+    hypothesis: "Stochastic is oversold"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: STOCH_OVERBOUGHT
+    name: Stochastic Overbought
+    indicator: STOCH
+    parameters:
+      <<: *stoch_std
+      threshold: 80
+    formula: "STOCHk_14_3_3 > 80"
+    classification: LEADING
+    hypothesis: "Stochastic is overbought"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: STOCH_BULLISH_CROSS
+    name: Stochastic Bullish Cross
+    indicator: STOCH
+    parameters: *stoch_std
+    formula: "(STOCHk_14_3_3 > STOCHd_14_3_3) and (STOCHk_14_3_3.shift(1) <= STOCHd_14_3_3.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Stochastic K kruist boven D"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Awesome Oscillator Signalen
+# =============================================================================
+
+  - id: AO_BULLISH_ZERO_CROSS
+    name: Awesome Oscillator Bullish Zero Cross
+    indicator: AO
+    parameters: *ao_std
+    formula: "(AO_5_34 > 0) and (AO_5_34.shift(1) <= 0)"
+    classification: COINCIDENT
+    hypothesis: "AO kruist bullish boven zero line"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: AO_BEARISH_ZERO_CROSS
+    name: Awesome Oscillator Bearish Zero Cross
+    indicator: AO
+    parameters: *ao_std
+    formula: "(AO_5_34 < 0) and (AO_5_34.shift(1) >= 0)"
+    classification: COINCIDENT
+    hypothesis: "AO kruist bearish onder zero line"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: AO_TWIN_PEAKS_BEARISH
+    name: Awesome Oscillator Twin Peaks Bearish
+    indicator: AO
+    parameters: *ao_std
+    formula: "(AO_5_34 > 0) and (AO_5_34 < AO_5_34.shift(5)) and (AO_5_34.shift(5) > AO_5_34.shift(10))"
+    classification: LEADING
+    hypothesis: "AO twin peaks bearish pattern"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: AO_TWIN_PEAKS_BULLISH
+    name: Awesome Oscillator Twin Peaks Bullish
+    indicator: AO
+    parameters: *ao_std
+    formula: "(AO_5_34 < 0) and (AO_5_34 > AO_5_34.shift(5)) and (AO_5_34.shift(5) < AO_5_34.shift(10))"
+    classification: LEADING
+    hypothesis: "AO twin peaks bullish pattern"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Composite/Confluence Signalen
+# =============================================================================
+
+  - id: BULLISH_CONFLUENCE_STRONG
+    name: Strong Bullish Confluence
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 > 25) and (CMF_20 > 0.05) and (Close > KC_mid)"
+    classification: CONFIRMING
+    hypothesis: "Sterke bullish confluence over meerdere signalen"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["ADX_TREND_CONFIRM", "CMF_BULLISH_BIAS"]
+
+  - id: BEARISH_CONFLUENCE_STRONG
+    name: Strong Bearish Confluence
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 > 25) and (CMF_20 < -0.05) and (Close < KC_mid)"
+    classification: CONFIRMING
+    hypothesis: "Sterke bearish confluence over meerdere signalen"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["ADX_TREND_CONFIRM", "CMF_BEARISH_BIAS"]
+
+  - id: TREND_FOLLOWING_BREAKOUT_LONG
+    name: Trend Following Breakout Long
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 > 25) and (Close > KC_upper) and (CMF_20 > 0.05)"
+    classification: CONFIRMING
+    hypothesis: "Trend following breakout met volume bevestiging"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["ADX_TREND_CONFIRM", "KC_TREND_BREAKOUT_LONG", "CMF_BULLISH_BIAS"]
+
+  - id: TREND_FOLLOWING_BREAKOUT_SHORT
+    name: Trend Following Breakout Short
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 > 25) and (Close < KC_lower) and (CMF_20 < -0.05)"
+    classification: CONFIRMING
+    hypothesis: "Trend following breakout met volume bevestiging"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["ADX_TREND_CONFIRM", "KC_TREND_BREAKOUT_SHORT", "CMF_BEARISH_BIAS"]
+
+  - id: MEAN_REVERSION_SETUP_LONG
+    name: Mean Reversion Setup Long
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 < 20) and (RSI_14 < 30) and (Close <= KC_lower)"
+    classification: LEADING
+    hypothesis: "Mean reversion setup met oversold condities"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["ADX_NON_TRENDING_REGIME", "RSI_OVERSOLD", "KC_MEAN_REVERSION_LONG"]
+
+  - id: MEAN_REVERSION_SETUP_SHORT
+    name: Mean Reversion Setup Short
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 < 20) and (RSI_14 > 70) and (Close >= KC_upper)"
+    classification: LEADING
+    hypothesis: "Mean reversion setup met overbought condities"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["ADX_NON_TRENDING_REGIME", "RSI_OVERBOUGHT", "KC_MEAN_REVERSION_SHORT"]
+
+# =============================================================================
+# Volatility Breakout Signalen
+# =============================================================================
+
+  - id: VOLATILITY_BREAKOUT_LONG
+    name: Volatility Breakout Long
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(BB_SQUEEZE) and (Close > BB_upper) and (ATR_14 > ATR_14.rolling(20).mean())"
+    classification: COINCIDENT
+    hypothesis: "Volatility breakout naar boven"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["BB_SQUEEZE", "BB_BREAKOUT_LONG", "ATR_HIGH_VOLATILITY"]
+
+  - id: VOLATILITY_BREAKOUT_SHORT
+    name: Volatility Breakout Short
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(BB_SQUEEZE) and (Close < BB_lower) and (ATR_14 > ATR_14.rolling(20).mean())"
+    classification: COINCIDENT
+    hypothesis: "Volatility breakout naar beneden"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["BB_SQUEEZE", "BB_BREAKOUT_SHORT", "ATR_HIGH_VOLATILITY"]
+
+# =============================================================================
+# Momentum Confluence Signalen
+# =============================================================================
+
+  - id: MOMENTUM_BULLISH_CONFLUENCE
+    name: Momentum Bullish Confluence
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(RSI_14 > 50) and (MACD_12_26_9 > MACDs_12_26_9) and (STOCHk_14_3_3 > 50)"
+    classification: COINCIDENT
+    hypothesis: "Momentum indicators tonen bullish confluence"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["MACD_BULLISH_CROSS"]
+
+  - id: MOMENTUM_BEARISH_CONFLUENCE
+    name: Momentum Bearish Confluence
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(RSI_14 < 50) and (MACD_12_26_9 < MACDs_12_26_9) and (STOCHk_14_3_3 < 50)"
+    classification: COINCIDENT
+    hypothesis: "Momentum indicators tonen bearish confluence"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["MACD_BEARISH_CROSS"]
+
+# =============================================================================
+# Volume Confluence Signalen
+# =============================================================================
+
+  - id: VOLUME_BULLISH_CONFLUENCE
+    name: Volume Bullish Confluence
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(CMF_20 > 0.05) and (OBV > OBV.rolling(20).mean())"
+    classification: COINCIDENT
+    hypothesis: "Volume indicators tonen bullish confluence"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["CMF_BULLISH_BIAS"]
+
+  - id: VOLUME_BEARISH_CONFLUENCE
+    name: Volume Bearish Confluence
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(CMF_20 < -0.05) and (OBV < OBV.rolling(20).mean())"
+    classification: COINCIDENT
+    hypothesis: "Volume indicators tonen bearish confluence"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["CMF_BEARISH_BIAS"]
+
+# =============================================================================
+# Multi-Timeframe Signalen
+# =============================================================================
+
+  - id: MTF_BULLISH_ALIGNMENT
+    name: Multi-Timeframe Bullish Alignment
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 > 25) and (RSI_14 > 50) and (MACD_12_26_9 > MACDs_12_26_9) and (CMF_20 > 0.05)"
+    classification: CONFIRMING
+    hypothesis: "Bullish alignment over meerdere timeframes"
+    polarity: LONG
+    timeframe_scope: MULTI
+    dependencies: []
+
+  - id: MTF_BEARISH_ALIGNMENT
+    name: Multi-Timeframe Bearish Alignment
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 > 25) and (RSI_14 < 50) and (MACD_12_26_9 < MACDs_12_26_9) and (CMF_20 < -0.05)"
+    classification: CONFIRMING
+    hypothesis: "Bearish alignment over meerdere timeframes"
+    polarity: SHORT
+    timeframe_scope: MULTI
+    dependencies: []
+
+# =============================================================================
+# Risk Management Signalen
+# =============================================================================
+
+  - id: RISK_HIGH_VOLATILITY
+    name: High Risk Volatility
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "ATR_14 > ATR_14.rolling(20).mean() * 2.0"
+    classification: COINCIDENT
+    hypothesis: "Extreem hoge volatiliteit - risico verhogen"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: ["ATR_HIGH_VOLATILITY"]
+
+  - id: RISK_LOW_LIQUIDITY
+    name: Low Liquidity Risk
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(Volume < Volume.rolling(20).mean() * 0.5) and (ATR_14 > ATR_14.rolling(20).mean())"
+    classification: COINCIDENT
+    hypothesis: "Lage liquiditeit met hoge volatiliteit"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: ["ATR_HIGH_VOLATILITY"]
+
+# =============================================================================
+# Market Regime Signalen
+# =============================================================================
+
+  - id: REGIME_TRENDING_BULLISH
+    name: Trending Bullish Regime
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 > 25) and (CMF_20 > 0.05) and (Close > KC_mid) and (MACD_12_26_9 > MACDs_12_26_9)"
+    classification: CONFIRMING
+    hypothesis: "Markt in bullish trending regime"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: ["ADX_TREND_CONFIRM", "CMF_BULLISH_BIAS", "MACD_BULLISH_CROSS"]
+
+  - id: REGIME_TRENDING_BEARISH
+    name: Trending Bearish Regime
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 > 25) and (CMF_20 < -0.05) and (Close < KC_mid) and (MACD_12_26_9 < MACDs_12_26_9)"
+    classification: CONFIRMING
+    hypothesis: "Markt in bearish trending regime"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: ["ADX_TREND_CONFIRM", "CMF_BEARISH_BIAS", "MACD_BEARISH_CROSS"]
+
+  - id: REGIME_RANGING
+    name: Ranging Regime
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ADX_14 < 20) and (ATR_14 < ATR_14.rolling(20).mean() * 0.8)"
+    classification: CONFIRMING
+    hypothesis: "Markt in ranging regime"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: ["ADX_NON_TRENDING_REGIME", "ATR_LOW_VOLATILITY"]
+
+  - id: REGIME_VOLATILE
+    name: Volatile Regime
+    indicator: COMPOSITE
+    parameters: {}
+    formula: "(ATR_14 > ATR_14.rolling(20).mean() * 1.5) and (ADX_14 < 25)"
+    classification: COINCIDENT
+    hypothesis: "Markt in volatile maar niet trending regime"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: ["ATR_HIGH_VOLATILITY", "ADX_NON_TRENDING_REGIME"]
+
+# =============================================================================
+# Directional (+DI/-DI) Crossover Signalen
+# =============================================================================
+
+  - id: DI_BULLISH_CROSS
+    name: Directional Bullish Cross
+    indicator: DI
+    parameters: *adx_14
+    formula: "(DI_plus_14 > DI_minus_14) and (DI_plus_14.shift(1) <= DI_minus_14.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Positieve DI kruist boven negatieve DI - bullish momentum"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: DI_BEARISH_CROSS
+    name: Directional Bearish Cross
+    indicator: DI
+    parameters: *adx_14
+    formula: "(DI_plus_14 < DI_minus_14) and (DI_plus_14.shift(1) >= DI_minus_14.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Positieve DI kruist onder negatieve DI - bearish momentum"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: DI_STRONG_BULLISH
+    name: Directional Strong Bullish
+    indicator: DI
+    parameters: *adx_14
+    formula: "(DI_plus_14 > DI_minus_14) and (DI_plus_14 > 25)"
+    classification: CONFIRMING
+    hypothesis: "Sterke bullish directional momentum"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: DI_STRONG_BEARISH
+    name: Directional Strong Bearish
+    indicator: DI
+    parameters: *adx_14
+    formula: "(DI_minus_14 > DI_plus_14) and (DI_minus_14 > 25)"
+    classification: CONFIRMING
+    hypothesis: "Sterke bearish directional momentum"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# ADX Trend Exhaustion Signalen
+# =============================================================================
+
+  - id: ADX_TREND_EXHAUSTION
+    name: ADX Trend Exhaustion
+    indicator: ADX
+    parameters: *adx_14
+    formula: "(ADX_14 > 50) and (ADX_14 < ADX_14.shift(3))"
+    classification: LEADING
+    hypothesis: "ADX daalt vanaf hoge waarde - trend verliest momentum"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ADX_PEAK_REVERSAL
+    name: ADX Peak Reversal
+    indicator: ADX
+    parameters: *adx_14
+    formula: "(ADX_14 > 40) and (ADX_14 < ADX_14.shift(5)) and (ADX_14.shift(5) > ADX_14.shift(10))"
+    classification: LEADING
+    hypothesis: "ADX bereikt piek en keert om - trend reversal mogelijk"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# KC Dynamic Support/Resistance Signalen
+# =============================================================================
+
+  - id: KC_DYNAMIC_SUPPORT
+    name: KC Dynamic Support
+    indicator: KC
+    parameters: *kc_20
+    formula: "(Close >= KC_lower) and (Close <= KC_mid)"
+    classification: LEADING
+    hypothesis: "Prijs vindt support op KC lower band"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: KC_DYNAMIC_RESISTANCE
+    name: KC Dynamic Resistance
+    indicator: KC
+    parameters: *kc_20
+    formula: "(Close <= KC_upper) and (Close >= KC_mid)"
+    classification: LEADING
+    hypothesis: "Prijs vindt resistance op KC upper band"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: KC_PULLBACK_LONG
+    name: KC Pullback Long
+    indicator: KC
+    parameters: *kc_20
+    formula: "(Close > KC_mid) and (Close <= KC_upper) and (Close.shift(1) > KC_upper.shift(1))"
+    classification: LEADING
+    hypothesis: "Pullback naar KC mid band in uptrend"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: KC_PULLBACK_SHORT
+    name: KC Pullback Short
+    indicator: KC
+    parameters: *kc_20
+    formula: "(Close < KC_mid) and (Close >= KC_lower) and (Close.shift(1) < KC_lower.shift(1))"
+    classification: LEADING
+    hypothesis: "Pullback naar KC mid band in downtrend"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# AO Saucer Signalen
+# =============================================================================
+
+  - id: AO_SAUCER_BULLISH
+    name: AO Saucer Bullish
+    indicator: AO
+    parameters: *ao_std
+    formula: "(AO_5_34 > AO_5_34.shift(5)) and (AO_5_34.shift(5) < AO_5_34.shift(10)) and (AO_5_34 < 0)"
+    classification: LEADING
+    hypothesis: "AO vormt bullish saucer pattern onder zero line"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: AO_SAUCER_BEARISH
+    name: AO Saucer Bearish
+    indicator: AO
+    parameters: *ao_std
+    formula: "(AO_5_34 < AO_5_34.shift(5)) and (AO_5_34.shift(5) > AO_5_34.shift(10)) and (AO_5_34 > 0)"
+    classification: LEADING
+    hypothesis: "AO vormt bearish saucer pattern boven zero line"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Supertrend Flip Signalen
+# =============================================================================
+
+  - id: SUPER_TREND_FLIP_BULL
+    name: Supertrend Flip Bullish
+    indicator: SUPERTREND
+    parameters: {period: 10, multiplier: 3}
+    formula: "(SUPERTREND_10_3 > Close) and (SUPERTREND_10_3.shift(1) <= Close.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Supertrend flipt naar bullish"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: SUPER_TREND_FLIP_BEAR
+    name: Supertrend Flip Bearish
+    indicator: SUPERTREND
+    parameters: {period: 10, multiplier: 3}
+    formula: "(SUPERTREND_10_3 < Close) and (SUPERTREND_10_3.shift(1) >= Close.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Supertrend flipt naar bearish"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: SUPER_TREND_BULLISH
+    name: Supertrend Bullish
+    indicator: SUPERTREND
+    parameters: {period: 10, multiplier: 3}
+    formula: "SUPERTREND_10_3 < Close"
+    classification: CONFIRMING
+    hypothesis: "Prijs boven Supertrend - bullish trend"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: SUPER_TREND_BEARISH
+    name: Supertrend Bearish
+    indicator: SUPERTREND
+    parameters: {period: 10, multiplier: 3}
+    formula: "SUPERTREND_10_3 > Close"
+    classification: CONFIRMING
+    hypothesis: "Prijs onder Supertrend - bearish trend"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Ichimoku Cluster Signalen
+# =============================================================================
+
+  - id: ICHIMOKU_KUMO_BREAKOUT_LONG
+    name: Ichimoku Kumo Breakout Long
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "(Close > ICHIMOKU_senkou_a) and (Close > ICHIMOKU_senkou_b) and (ICHIMOKU_senkou_a > ICHIMOKU_senkou_b)"
+    classification: CONFIRMING
+    hypothesis: "Prijs breekt boven Kumo uit - bullish"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHIMOKU_KUMO_BREAKOUT_SHORT
+    name: Ichimoku Kumo Breakout Short
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "(Close < ICHIMOKU_senkou_a) and (Close < ICHIMOKU_senkou_b) and (ICHIMOKU_senkou_a < ICHIMOKU_senkou_b)"
+    classification: CONFIRMING
+    hypothesis: "Prijs breekt onder Kumo uit - bearish"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHIMOKU_TENKAN_KIJUN_CROSS_BULL
+    name: Ichimoku Tenkan Kijun Cross Bullish
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "(ICHIMOKU_tenkan > ICHIMOKU_kijun) and (ICHIMOKU_tenkan.shift(1) <= ICHIMOKU_kijun.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Tenkan kruist boven Kijun - bullish momentum"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHIMOKU_TENKAN_KIJUN_CROSS_BEAR
+    name: Ichimoku Tenkan Kijun Cross Bearish
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "(ICHIMOKU_tenkan < ICHIMOKU_kijun) and (ICHIMOKU_tenkan.shift(1) >= ICHIMOKU_kijun.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Tenkan kruist onder Kijun - bearish momentum"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHIMOKU_KUMO_TWIST_BULL
+    name: Ichimoku Kumo Twist Bullish
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "(ICHIMOKU_senkou_a > ICHIMOKU_senkou_b) and (ICHIMOKU_senkou_a.shift(1) <= ICHIMOKU_senkou_b.shift(1))"
+    classification: LEADING
+    hypothesis: "Kumo twist naar bullish - support wordt resistance"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHIMOKU_KUMO_TWIST_BEAR
+    name: Ichimoku Kumo Twist Bearish
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "(ICHIMOKU_senkou_a < ICHIMOKU_senkou_b) and (ICHIMOKU_senkou_a.shift(1) >= ICHIMOKU_senkou_b.shift(1))"
+    classification: LEADING
+    hypothesis: "Kumo twist naar bearish - resistance wordt support"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# VPVR / Volume Profile Signalen
+# =============================================================================
+
+  - id: VPVR_HVN_RESISTANCE
+    name: VPVR High Volume Node Resistance
+    indicator: VPVR
+    parameters: {lookback: 20, threshold: 1.5}
+    formula: "(Close >= VPVR_HVN_upper) and (Volume > Volume.rolling(20).mean() * 1.5)"
+    classification: LEADING
+    hypothesis: "Prijs test HVN resistance met hoog volume"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: VPVR_HVN_SUPPORT
+    name: VPVR High Volume Node Support
+    indicator: VPVR
+    parameters: {lookback: 20, threshold: 1.5}
+    formula: "(Close <= VPVR_HVN_lower) and (Volume > Volume.rolling(20).mean() * 1.5)"
+    classification: LEADING
+    hypothesis: "Prijs test HVN support met hoog volume"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: VPVR_LVN_BREAKOUT_UP
+    name: VPVR Low Volume Node Breakout Up
+    indicator: VPVR
+    parameters: {lookback: 20, threshold: 0.5}
+    formula: "(Close > VPVR_LVN_upper) and (Volume < Volume.rolling(20).mean() * 0.5)"
+    classification: COINCIDENT
+    hypothesis: "Prijs breekt door LVN naar boven"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: VPVR_LVN_BREAKOUT_DOWN
+    name: VPVR Low Volume Node Breakout Down
+    indicator: VPVR
+    parameters: {lookback: 20, threshold: 0.5}
+    formula: "(Close < VPVR_LVN_lower) and (Volume < Volume.rolling(20).mean() * 0.5)"
+    classification: COINCIDENT
+    hypothesis: "Prijs breekt door LVN naar beneden"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: VPVR_POC_TOUCH
+    name: VPVR Point of Control Touch
+    indicator: VPVR
+    parameters: {lookback: 20}
+    formula: "abs(Close - VPVR_POC) <= (ATR_14 * 0.1)"
+    classification: LEADING
+    hypothesis: "Prijs raakt Point of Control - belangrijke level"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: VPVR_VALUE_AREA_INSIDE
+    name: VPVR Value Area Inside
+    indicator: VPVR
+    parameters: {lookback: 20, va_percent: 70}
+    formula: "(Close >= VPVR_VA_lower) and (Close <= VPVR_VA_upper)"
+    classification: CONFIRMING
+    hypothesis: "Prijs binnen Value Area - normale trading range"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# OBV Trend Confirmation Signalen
+# =============================================================================
+
+  - id: OBV_TREND_CONFIRM_BULL
+    name: OBV Trend Confirmation Bullish
+    indicator: OBV
+    parameters: {lookback: 20}
+    formula: "(Close > Close.shift(5)) and (OBV > OBV.shift(5)) and (OBV > OBV.rolling(20).mean())"
+    classification: CONFIRMING
+    hypothesis: "OBV bevestigt bullish prijsbeweging"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: OBV_TREND_CONFIRM_BEAR
+    name: OBV Trend Confirmation Bearish
+    indicator: OBV
+    parameters: {lookback: 20}
+    formula: "(Close < Close.shift(5)) and (OBV < OBV.shift(5)) and (OBV < OBV.rolling(20).mean())"
+    classification: CONFIRMING
+    hypothesis: "OBV bevestigt bearish prijsbeweging"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: OBV_TREND_STRENGTH_BULL
+    name: OBV Trend Strength Bullish
+    indicator: OBV
+    parameters: {lookback: 20}
+    formula: "(OBV > OBV.rolling(20).mean() * 1.2) and (OBV > OBV.shift(10))"
+    classification: CONFIRMING
+    hypothesis: "OBV toont sterke bullish trend"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: OBV_TREND_STRENGTH_BEAR
+    name: OBV Trend Strength Bearish
+    indicator: OBV
+    parameters: {lookback: 20}
+    formula: "(OBV < OBV.rolling(20).mean() * 0.8) and (OBV < OBV.shift(10))"
+    classification: CONFIRMING
+    hypothesis: "OBV toont sterke bearish trend"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# RSI Center-line Cross Signalen
+# =============================================================================
+
+  - id: RSI_CENTER_CROSS_BULL
+    name: RSI Center-line Cross Bullish
+    indicator: RSI
+    parameters: *rsi_14
+    formula: "(RSI_14 > 50) and (RSI_14.shift(1) <= 50)"
+    classification: COINCIDENT
+    hypothesis: "RSI kruist boven 50 - bullish momentum shift"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: RSI_CENTER_CROSS_BEAR
+    name: RSI Center-line Cross Bearish
+    indicator: RSI
+    parameters: *rsi_14
+    formula: "(RSI_14 < 50) and (RSI_14.shift(1) >= 50)"
+    classification: COINCIDENT
+    hypothesis: "RSI kruist onder 50 - bearish momentum shift"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: RSI_CENTER_BULLISH
+    name: RSI Center-line Bullish
+    indicator: RSI
+    parameters: *rsi_14
+    formula: "RSI_14 > 50"
+    classification: CONFIRMING
+    hypothesis: "RSI boven 50 - bullish momentum"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: RSI_CENTER_BEARISH
+    name: RSI Center-line Bearish
+    indicator: RSI
+    parameters: *rsi_14
+    formula: "RSI_14 < 50"
+    classification: CONFIRMING
+    hypothesis: "RSI onder 50 - bearish momentum"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Stochastic Divergence Signalen
+# =============================================================================
+
+  - id: STOCH_DIVERGENCE_BULL
+    name: Stochastic Bullish Divergence
+    indicator: STOCH
+    parameters: *stoch_std
+    formula: "(Close < Close.shift(5)) and (STOCHk_14_3_3 > STOCHk_14_3_3.shift(5)) and (STOCHk_14_3_3 < 30)"
+    classification: LEADING
+    hypothesis: "Stochastic bullish divergence - vroeg momentumherstel"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: STOCH_DIVERGENCE_BEAR
+    name: Stochastic Bearish Divergence
+    indicator: STOCH
+    parameters: *stoch_std
+    formula: "(Close > Close.shift(5)) and (STOCHk_14_3_3 < STOCHk_14_3_3.shift(5)) and (STOCHk_14_3_3 > 70)"
+    classification: LEADING
+    hypothesis: "Stochastic bearish divergence - vroeg momentumverlies"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: STOCH_HIDDEN_DIVERGENCE_BULL
+    name: Stochastic Hidden Bullish Divergence
+    indicator: STOCH
+    parameters: *stoch_std
+    formula: "(Close > Close.shift(5)) and (STOCHk_14_3_3 < STOCHk_14_3_3.shift(5)) and (STOCHk_14_3_3 > 50)"
+    classification: LEADING
+    hypothesis: "Stochastic hidden bullish divergence - trend continuation"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: STOCH_HIDDEN_DIVERGENCE_BEAR
+    name: Stochastic Hidden Bearish Divergence
+    indicator: STOCH
+    parameters: *stoch_std
+    formula: "(Close < Close.shift(5)) and (STOCHk_14_3_3 > STOCHk_14_3_3.shift(5)) and (STOCHk_14_3_3 < 50)"
+    classification: LEADING
+    hypothesis: "Stochastic hidden bearish divergence - trend continuation"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# CMF Divergence Signalen (Nieuw toegevoegd)
+# =============================================================================
+
+  - id: CMF_DIVERGENCE_BULLISH
+    name: CMF Bullish Divergence
+    indicator: CMF
+    parameters: *cmf_20
+    formula: "(Close < Close.shift(5)) and (CMF_20 > CMF_20.shift(5)) and (CMF_20 < -0.05)"
+    classification: LEADING
+    hypothesis: "Verkoopdruk neemt af ondanks prijsdaling - bullish divergence"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: CMF_DIVERGENCE_BEARISH
+    name: CMF Bearish Divergence
+    indicator: CMF
+    parameters: *cmf_20
+    formula: "(Close > Close.shift(5)) and (CMF_20 < CMF_20.shift(5)) and (CMF_20 > 0.05)"
+    classification: LEADING
+    hypothesis: "Koopdruk neemt af ondanks prijsstijging - bearish divergence"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# MACD Divergence en Zero Line Cross Signalen (Nieuw toegevoegd)
+# =============================================================================
+
+  - id: MACD_DIVERGENCE_BULLISH
+    name: MACD Bullish Divergence
+    indicator: MACD
+    parameters: *macd_std
+    formula: "(Close < Close.shift(5)) and (MACD_12_26_9 > MACD_12_26_9.shift(5)) and (RSI_14 < 30)"
+    classification: LEADING
+    hypothesis: "MACD divergeert bullish in oversold zone - mogelijke reversal"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_DIVERGENCE_BEARISH
+    name: MACD Bearish Divergence
+    indicator: MACD
+    parameters: *macd_std
+    formula: "(Close > Close.shift(5)) and (MACD_12_26_9 < MACD_12_26_9.shift(5)) and (RSI_14 > 70)"
+    classification: LEADING
+    hypothesis: "MACD divergeert bearish in overbought zone - mogelijke reversal"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_ZERO_LINE_CROSS_BULL
+    name: MACD Zero Line Cross Bullish
+    indicator: MACD
+    parameters: *macd_std
+    formula: "(MACD_12_26_9 > 0) and (MACD_12_26_9.shift(1) <= 0)"
+    classification: CONFIRMING
+    hypothesis: "MACD kruist boven nullijn - middellange termijn trend verschuift bullish"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: MACD_ZERO_LINE_CROSS_BEAR
+    name: MACD Zero Line Cross Bearish
+    indicator: MACD
+    parameters: *macd_std
+    formula: "(MACD_12_26_9 < 0) and (MACD_12_26_9.shift(1) >= 0)"
+    classification: CONFIRMING
+    hypothesis: "MACD kruist onder nullijn - middellange termijn trend verschuift bearish"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Ichimoku Price Position Signalen (Nieuw toegevoegd)
+# =============================================================================
+
+  - id: ICHIMOKU_PRICE_ABOVE_KUMO
+    name: Ichimoku Price Above Kumo
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "(Close > ICHIMOKU_senkou_a) and (Close > ICHIMOKU_senkou_b)"
+    classification: COINCIDENT
+    hypothesis: "Prijs boven Kumo - bullish context"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHIMOKU_PRICE_BELOW_KUMO
+    name: Ichimoku Price Below Kumo
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "(Close < ICHIMOKU_senkou_a) and (Close < ICHIMOKU_senkou_b)"
+    classification: COINCIDENT
+    hypothesis: "Prijs onder Kumo - bearish context"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHIMOKU_PRICE_IN_KUMO
+    name: Ichimoku Price In Kumo
+    indicator: ICHIMOKU
+    parameters: {tenkan: 9, kijun: 26, senkou_b: 52}
+    formula: "((Close >= ICHIMOKU_senkou_a) and (Close <= ICHIMOKU_senkou_b)) or ((Close >= ICHIMOKU_senkou_b) and (Close <= ICHIMOKU_senkou_a))"
+    classification: COINCIDENT
+    hypothesis: "Prijs binnen Kumo - consolidatie fase"
+    polarity: NEUTRAL
+    timeframe_scope: ANY
+    dependencies: []
+
+# =============================================================================
+# Ichimoku Variant Signalen (Nieuw voor PvA 1.2)
+# =============================================================================
+
+  # Ichimoku 6_20_52 (LEADING - Intraday)
+  - id: ICHI_6_20_52_TK_CROSS_BULL
+    name: Ichimoku Intraday TK Cross Bullish
+    indicator: ICHIMOKU
+    parameters: *ichi_intraday
+    formula: "(ICHIMOKU_tenkan_6_20_52 > ICHIMOKU_kijun_6_20_52) and (ICHIMOKU_tenkan_6_20_52.shift(1) <= ICHIMOKU_kijun_6_20_52.shift(1))"
+    classification: LEADING
+    hypothesis: "Intraday Tenkan kruist boven Kijun - vroeg momentum"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHI_6_20_52_TK_CROSS_BEAR
+    name: Ichimoku Intraday TK Cross Bearish
+    indicator: ICHIMOKU
+    parameters: *ichi_intraday
+    formula: "(ICHIMOKU_tenkan_6_20_52 < ICHIMOKU_kijun_6_20_52) and (ICHIMOKU_tenkan_6_20_52.shift(1) >= ICHIMOKU_kijun_6_20_52.shift(1))"
+    classification: LEADING
+    hypothesis: "Intraday Tenkan kruist onder Kijun - vroeg momentum"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHI_6_20_52_KUMO_BREAKOUT_LONG
+    name: Ichimoku Intraday Kumo Breakout Long
+    indicator: ICHIMOKU
+    parameters: *ichi_intraday
+    formula: "(Close > ICHIMOKU_senkou_a_6_20_52) and (Close > ICHIMOKU_senkou_b_6_20_52) and (Close.shift(1) <= max(ICHIMOKU_senkou_a_6_20_52.shift(1), ICHIMOKU_senkou_b_6_20_52.shift(1)))"
+    classification: LEADING
+    hypothesis: "Intraday kumo breakout naar boven"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHI_6_20_52_KUMO_BREAKOUT_SHORT
+    name: Ichimoku Intraday Kumo Breakout Short
+    indicator: ICHIMOKU
+    parameters: *ichi_intraday
+    formula: "(Close < ICHIMOKU_senkou_a_6_20_52) and (Close < ICHIMOKU_senkou_b_6_20_52) and (Close.shift(1) >= min(ICHIMOKU_senkou_a_6_20_52.shift(1), ICHIMOKU_senkou_b_6_20_52.shift(1)))"
+    classification: LEADING
+    hypothesis: "Intraday kumo breakout naar beneden"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  # Ichimoku 7_22_44 (COINCIDENT - Crypto)
+  - id: ICHI_7_22_44_TK_CROSS_BULL
+    name: Ichimoku Crypto TK Cross Bullish
+    indicator: ICHIMOKU
+    parameters: *ichi_crypto
+    formula: "(ICHIMOKU_tenkan_7_22_44 > ICHIMOKU_kijun_7_22_44) and (ICHIMOKU_tenkan_7_22_44.shift(1) <= ICHIMOKU_kijun_7_22_44.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Crypto-optimized TK cross bullish"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHI_7_22_44_TK_CROSS_BEAR
+    name: Ichimoku Crypto TK Cross Bearish
+    indicator: ICHIMOKU
+    parameters: *ichi_crypto
+    formula: "(ICHIMOKU_tenkan_7_22_44 < ICHIMOKU_kijun_7_22_44) and (ICHIMOKU_tenkan_7_22_44.shift(1) >= ICHIMOKU_kijun_7_22_44.shift(1))"
+    classification: COINCIDENT
+    hypothesis: "Crypto-optimized TK cross bearish"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  # Ichimoku 10_30_60 (CONFIRMING - Swing)
+  - id: ICHI_10_30_60_TK_CROSS_BULL
+    name: Ichimoku Swing TK Cross Bullish
+    indicator: ICHIMOKU
+    parameters: *ichi_swing
+    formula: "(ICHIMOKU_tenkan_10_30_60 > ICHIMOKU_kijun_10_30_60) and (ICHIMOKU_tenkan_10_30_60.shift(1) <= ICHIMOKU_kijun_10_30_60.shift(1))"
+    classification: CONFIRMING
+    hypothesis: "Swing Ichimoku TK cross - late trend bevestiging"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHI_10_30_60_TK_CROSS_BEAR
+    name: Ichimoku Swing TK Cross Bearish
+    indicator: ICHIMOKU
+    parameters: *ichi_swing
+    formula: "(ICHIMOKU_tenkan_10_30_60 < ICHIMOKU_kijun_10_30_60) and (ICHIMOKU_tenkan_10_30_60.shift(1) >= ICHIMOKU_kijun_10_30_60.shift(1))"
+    classification: CONFIRMING
+    hypothesis: "Swing Ichimoku TK cross bearish - late trend bevestiging"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHI_10_30_60_KUMO_BREAKOUT_LONG
+    name: Ichimoku Swing Kumo Breakout Long
+    indicator: ICHIMOKU
+    parameters: *ichi_swing
+    formula: "(Close > ICHIMOKU_senkou_a_10_30_60) and (Close > ICHIMOKU_senkou_b_10_30_60)"
+    classification: CONFIRMING
+    hypothesis: "Swing kumo breakout - sterke trend bevestiging"
+    polarity: LONG
+    timeframe_scope: ANY
+    dependencies: []
+
+  - id: ICHI_10_30_60_KUMO_BREAKOUT_SHORT
+    name: Ichimoku Swing Kumo Breakout Short
+    indicator: ICHIMOKU
+    parameters: *ichi_swing
+    formula: "(Close < ICHIMOKU_senkou_a_10_30_60) and (Close < ICHIMOKU_senkou_b_10_30_60)"
+    classification: CONFIRMING
+    hypothesis: "Swing kumo breakout short - sterke trend bevestiging"
+    polarity: SHORT
+    timeframe_scope: ANY
+    dependencies: []
+
