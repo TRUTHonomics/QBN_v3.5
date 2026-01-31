@@ -143,19 +143,26 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# KFL/QBN Specific
+# --- Project / KFL-QBN ---
 # Windows reserved name (invalid for Git)
 nul
+# Logging (.cursorrules: _log/ in project root)
 _log/
 _log/archive/
 *.log
+# Build / cache
 .numba_cache/
-__pycache__/
 .cursor/
 .docs/
 architecture.yaml
+# Validation output (generated reports)
+_validation/
+_OUD/
+_backup/
+# Secrets
+.env
+.env.*
+!.env.example
+# Optional: grote binaire/gegenereerde bestanden
 *.pdf
-*.png
-*.json
-!requirements.txt
-!README.md
+# Config YAML/JSON wel meenemen; alleen specifieke uitzonderingen hierboven

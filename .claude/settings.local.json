@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(python -c:*)",
+      "Bash(grep:*)",
+      "WebFetch(domain:nvidia.github.io)",
+      "mcp__postgres-kflhyper__list_schemas",
+      "mcp__postgres-kflhyper__list_objects",
+      "WebSearch",
+      "Bash(psql:*)",
+      "Bash(PGPASSWORD=1234 psql:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker compose:*)",
+      "WebFetch(domain:catalog.ngc.nvidia.com)",
+      "Bash(docker logs:*)"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "postgres-kflhyper"
+  ]
+}
