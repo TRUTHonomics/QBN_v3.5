@@ -135,19 +135,22 @@ class MutualInformationAnalyzer(ThresholdOptimizer):
         active_states = (distribution > MIN_STATE_THRESHOLD).sum()
         if active_states < self.MIN_ACTIVE_STATES:
             logger.debug(f"Rejected: only {active_states} active states at "
-                        f"neutral={neutral_band}, strong={strong_thresh}")
+                        f"bull(nb={bullish_neutral_band}, st={bullish_strong_thresh}), "
+                        f"bear(nb={bearish_neutral_band}, st={bearish_strong_thresh})")
             return -1.0, raw_mi, dist_dict
         
         # DIVERSITY CONSTRAINT 2: Neutral state tussen 10-60%
         neutral_pct = dist_dict.get('neutral', 0)
         if neutral_pct < self.MIN_NEUTRAL_PERCENT:
             logger.debug(f"Rejected: neutral={neutral_pct:.1%} < {self.MIN_NEUTRAL_PERCENT:.0%} at "
-                        f"neutral_band={neutral_band}, strong={strong_thresh}")
+                        f"bull(nb={bullish_neutral_band}, st={bullish_strong_thresh}), "
+                        f"bear(nb={bearish_neutral_band}, st={bearish_strong_thresh})")
             return -1.0, raw_mi, dist_dict
         
         if neutral_pct > self.MAX_NEUTRAL_PERCENT:
             logger.debug(f"Rejected: neutral={neutral_pct:.1%} > {self.MAX_NEUTRAL_PERCENT:.0%} at "
-                        f"neutral_band={neutral_band}, strong={strong_thresh}")
+                        f"bull(nb={bullish_neutral_band}, st={bullish_strong_thresh}), "
+                        f"bear(nb={bearish_neutral_band}, st={bearish_strong_thresh})")
             return -1.0, raw_mi, dist_dict
 
         # DIVERSITY CONSTRAINT 3: beide kanten moeten voorkomen (anders krijg je stuck bias)
