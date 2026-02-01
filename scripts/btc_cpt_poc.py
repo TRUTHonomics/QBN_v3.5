@@ -6,48 +6,16 @@ Runs the new QBN v2 CPT Generator for asset_id 1 (BTC).
 import logging
 import sys
 import os
-import shutil
-from datetime import datetime
+from pathlib import Path
 
 # Voeg root directory toe aan path
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(PROJECT_ROOT)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.logging_utils import setup_logging
 from inference.qbn_v2_cpt_generator import QBNv2CPTGenerator
 
-# REASON: Volg logregels voor BTC POC
-def setup_logging():
-    log_dir = os.path.join(PROJECT_ROOT, '_log')
-    archive_dir = os.path.join(log_dir, 'archive')
-    os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(archive_dir, exist_ok=True)
-    
-    script_name = "btc_cpt_poc"
-    timestamp = datetime.now().strftime("%Y%m%d-%H-%M-%S")
-    log_file = os.path.join(log_dir, f"{script_name}_{timestamp}.log")
-    
-    # Archiveer oude logs
-    import glob
-    for old_log in glob.glob(os.path.join(log_dir, f"{script_name}_*.log")):
-        try:
-            shutil.move(old_log, os.path.join(archive_dir, os.path.basename(old_log)))
-        except Exception:
-            pass
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
-        ],
-        force=True
-    )
-    l = logging.getLogger(__name__)
-    l.info(f"🚀 New {script_name} run started. Logging to: {log_file}")
-    return l
-
-logger = setup_logging()
+logger = setup_logging("btc_cpt_poc")
 
 def run_btc_poc():
     asset_id = 1 # BTC

@@ -1146,4 +1146,6 @@ def run():
         if not handle_choice(choice): print("\n👋 Tot ziens!\n"); break
 
 if __name__ == '__main__':
+    from core.logging_utils import setup_logging
+    setup_logging("validation_menu")
     run()

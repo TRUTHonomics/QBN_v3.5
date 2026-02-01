@@ -1,48 +1,16 @@
-
 import os
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import pandas as pd
 import numpy as np
 import logging
-import shutil
-from datetime import datetime
 
-# REASON: Volg logregels voor Debug Stability
-def setup_logging():
-    log_dir = os.path.join(os.getcwd(), '_log')
-    archive_dir = os.path.join(log_dir, 'archive')
-    os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(archive_dir, exist_ok=True)
-    
-    script_name = "debug_stability"
-    timestamp = datetime.now().strftime("%Y%m%d-%H-%M-%S")
-    log_file = os.path.join(log_dir, f"{script_name}_{timestamp}.log")
-    
-    # Archiveer oude logs
-    import glob
-    for old_log in glob.glob(os.path.join(log_dir, f"{script_name}_*.log")):
-        try:
-            shutil.move(old_log, os.path.join(archive_dir, os.path.basename(old_log)))
-        except Exception:
-            pass
+from core.logging_utils import setup_logging
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
-        ],
-        force=True
-    )
-    l = logging.getLogger(__name__)
-    l.info(f"🚀 New {script_name} run started. Logging to: {log_file}")
-    return l
-
-logger = setup_logging()
-
-# Add workspace to path
-sys.path.append(os.getcwd())
+logger = setup_logging("debug_stability")
 
 from inference.qbn_v2_cpt_generator import QBNv2CPTGenerator
 from inference.validation.cpt_validator import CPTValidator

@@ -349,7 +349,7 @@ class BarrierBackfill:
         return None
     
     def process_chunk(self, start_time: datetime, end_time: datetime, overwrite: bool, use_gpu_lookup: bool):
-        """Verwerk een tijd-chunk (bijv. 1 maand)."""
+        """Verwerk een tijd-chunk (bijv. 6 maanden)."""
         self.logger.info(f"Processing chunk: {start_time} -> {end_time}")
         
         # 1. Haal pending timestamps op voor deze chunk
@@ -421,7 +421,7 @@ class BarrierBackfill:
 
     def run(self, since: datetime = None, resume: bool = True, overwrite: bool = False, use_gpu_lookup: bool = False):
         """
-        Run de backfill met chunked processing (per maand).
+        Run de backfill met chunked processing (per 6 maanden).
         """
         if resume and since is None:
             checkpoint = self.load_checkpoint()
@@ -442,16 +442,18 @@ class BarrierBackfill:
         now = datetime.now(timezone.utc)
         current_start = since
         total_processed = 0
-        
-        # Chunk per maand
+        chunk_months = 6
+
+        # Chunk per 6 maanden
         while current_start < now:
-            # Bereken eind van de maand
-            if current_start.month == 12:
-                next_month = current_start.replace(year=current_start.year + 1, month=1, day=1, hour=0, minute=0, second=0)
-            else:
-                next_month = current_start.replace(month=current_start.month + 1, day=1, hour=0, minute=0, second=0)
-            
-            current_end = min(next_month, now)
+            # Bereken eind van de chunk (6 maanden verder, eerste dag van die maand)
+            m = current_start.month - 1 + chunk_months
+            next_year = current_start.year + m // 12
+            next_month = m % 12 + 1
+            chunk_end = current_start.replace(year=next_year, month=next_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+            if chunk_end.tzinfo is None and current_start.tzinfo:
+                chunk_end = chunk_end.replace(tzinfo=timezone.utc)
+            current_end = min(chunk_end, now)
             
             # Verwerk chunk
             processed = self.process_chunk(current_start, current_end, overwrite, use_gpu_lookup)

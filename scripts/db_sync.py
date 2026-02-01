@@ -23,46 +23,16 @@ import os
 import sys
 import yaml
 import logging
-import shutil
 from pathlib import Path
 from typing import Dict, List, Any
-from datetime import datetime
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import psycopg2
 from psycopg2.extras import execute_values
 
-# REASON: Volg logregels voor Database Sync
-def setup_logging():
-    # Bepaal project root op basis van dit script
-    project_root = Path(__file__).resolve().parent.parent
-    log_dir = project_root / "_log"
-    archive_dir = log_dir / "archive"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    
-    script_name = "db_sync"
-    timestamp = datetime.now().strftime("%Y%m%d-%H-%M-%S")
-    log_file = log_dir / f"{script_name}_{timestamp}.log"
-    
-    # Archiveer oude logs
-    for old_log in log_dir.glob(f"{script_name}_*.log"):
-        try:
-            shutil.move(str(old_log), str(archive_dir / old_log.name))
-        except Exception:
-            pass
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
-        ],
-        force=True
-    )
-    l = logging.getLogger(__name__)
-    l.info(f"🚀 New {script_name} run started. Logging to: {log_file}")
-    return l
+from core.logging_utils import setup_logging
 
 # Configuratie paden - aangepast voor QBN_v3 container
 # REASON: Config YAMLs staan nu lokaal in /app/kfl_backend_config
@@ -71,8 +41,7 @@ SIGNALS_YAML = CONFIG_DIR / 'signals.yaml'
 SIGNAL_CLASS_YAML = CONFIG_DIR / 'signal_classification.yaml'
 DISCRETIZATION_YAML = CONFIG_DIR / 'discretization.yaml'
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-logger = setup_logging()
+logger = setup_logging("db_sync")
 
 
 def get_db_connection():

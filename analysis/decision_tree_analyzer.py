@@ -56,7 +56,48 @@ class DecisionTreeAnalyzer(ThresholdOptimizer):
         self.output_dir = output_dir or Path("_validation/threshold_analysis")
         self.max_depth = max_depth
         self.min_samples_leaf = min_samples_leaf
-        
+
+    def _train_single_feature_tree(
+        self,
+        train_df: pd.DataFrame,
+        test_df: pd.DataFrame,
+        feature_col: str,
+        horizon: str
+    ) -> Tuple[DecisionTreeClassifier, float, float, np.ndarray, Dict[str, float]]:
+        """
+        Train één CART-boom op een enkele feature (composite score).
+
+        REASON: Encapsuleert horizon-afhankelijke min_samples_leaf en retourneert
+        tree + scores + importance voor hergebruik bij target='all' (3 bomen) en target!=all (1 boom).
+
+        Returns:
+            (tree, train_score, test_score, cv_scores, importance_dict)
+        """
+        horizon_min_samples = self.min_samples_leaf
+        if horizon == '1d':
+            horizon_min_samples = max(10, int(len(train_df) * 0.05))
+        elif horizon == '4h':
+            horizon_min_samples = max(20, int(len(train_df) * 0.02))
+
+        X_train = train_df[[feature_col]].values
+        y_train = train_df['outcome_direction'].values
+        X_test = test_df[[feature_col]].values
+        y_test = test_df['outcome_direction'].values
+
+        tree = DecisionTreeClassifier(
+            max_depth=self.max_depth,
+            min_samples_leaf=horizon_min_samples,
+            random_state=42
+        )
+        tree.fit(X_train, y_train)
+
+        train_score = tree.score(X_train, y_train)
+        test_score = tree.score(X_test, y_test)
+        cv_scores = cross_val_score(tree, X_train, y_train, cv=5)
+        importance = {feature_col: float(tree.feature_importances_[0])}
+
+        return tree, train_score, test_score, cv_scores, importance
+
     def analyze(self, horizon: str, target: str = 'leading', df: Optional[pd.DataFrame] = None) -> ThresholdAnalysisResult:
         """
         Voer CART analyse uit voor een specifieke horizon en target.
@@ -75,49 +116,23 @@ class DecisionTreeAnalyzer(ThresholdOptimizer):
         df = self.load_data(horizon, df=df)
         train_df, test_df = self.train_test_split(df)
         
-        # REASON: Pas min_samples_leaf aan op basis van de dataset grootte per horizon.
-        horizon_min_samples = self.min_samples_leaf
-        if horizon == '1d':
-            horizon_min_samples = max(10, int(len(train_df) * 0.05))
-        elif horizon == '4h':
-            horizon_min_samples = max(20, int(len(train_df) * 0.02))
-            
-        # Prepare features (composite scores)
         feature_cols = ['leading_score', 'coincident_score', 'confirming_score']
-        X_train = train_df[feature_cols].values
-        y_train = train_df['outcome_direction'].values
-        X_test = test_df[feature_cols].values
-        y_test = test_df['outcome_direction'].values
-        
-        # Train decision tree
-        tree = DecisionTreeClassifier(
-            max_depth=self.max_depth,
-            min_samples_leaf=horizon_min_samples,
-            random_state=42
-        )
-        tree.fit(X_train, y_train)
-        
-        # Evalueer
-        train_score = tree.score(X_train, y_train)
-        test_score = tree.score(X_test, y_test)
-        
-        # Cross-validation
-        cv_scores = cross_val_score(tree, X_train, y_train, cv=5)
-        
-        logger.info(f"Tree trained. Train accuracy: {train_score:.3f}, "
-                   f"Test accuracy: {test_score:.3f}, CV mean: {cv_scores.mean():.3f}")
-        
-        # Extract split points
-        split_points = self._extract_split_points(tree, feature_cols)
-        
-        # Feature importance
-        importance = dict(zip(feature_cols, tree.feature_importances_))
-        
-        # REASON: Als target 'all' is, berekenen we thresholds voor alle kolommen en slaan ze op in metadata.
-        all_thresholds = {}
+
         if target == 'all':
+            # REASON: 3 losse bomen per composite; thresholds en plots per composite.
+            all_thresholds = {}
+            per_composite: Dict[str, Dict[str, Any]] = {}
+            importance_agg: Dict[str, float] = {}
+
             for col in feature_cols:
                 short_name = col.replace('_score', '')
+                tree, train_score, test_score, cv_scores, importance = self._train_single_feature_tree(
+                    train_df, test_df, col, horizon
+                )
+                logger.info(f"Tree trained for {col}. Train accuracy: {train_score:.3f}, "
+                           f"Test accuracy: {test_score:.3f}, CV mean: {cv_scores.mean():.3f}")
+
+                split_points = self._extract_split_points(tree, [col])
                 nb, st, bull_nb, bull_st, bear_nb, bear_st = self._derive_thresholds(split_points, col)
                 all_thresholds[short_name] = {
                     'neutral_band': nb,
@@ -127,49 +142,95 @@ class DecisionTreeAnalyzer(ThresholdOptimizer):
                     'bearish_neutral_band': bear_nb,
                     'bearish_strong_threshold': bear_st
                 }
-            
-            # Default voor de main fields (leading)
-            optimal_neutral, optimal_strong = all_thresholds['leading']['neutral_band'], all_thresholds['leading']['strong_threshold']
+                per_composite[short_name] = {
+                    'train_accuracy': train_score,
+                    'test_accuracy': test_score,
+                    'cv_scores': cv_scores.tolist(),
+                    'cv_mean': float(cv_scores.mean()),
+                    'cv_std': float(cv_scores.std()),
+                    'tree_depth': tree.get_depth(),
+                    'n_leaves': tree.get_n_leaves(),
+                    'split_points': split_points
+                }
+                importance_agg[col] = float(cv_scores.mean())
+
+                if HAS_PLOTTING:
+                    self._generate_tree_plot(tree, [col], horizon, short_name)
+                    self._generate_importance_plot(importance, horizon, short_name)
+
+            optimal_neutral = all_thresholds['leading']['neutral_band']
+            optimal_strong = all_thresholds['leading']['strong_threshold']
             bull_nb = all_thresholds['leading']['bullish_neutral_band']
             bull_st = all_thresholds['leading']['bullish_strong_threshold']
             bear_nb = all_thresholds['leading']['bearish_neutral_band']
             bear_st = all_thresholds['leading']['bearish_strong_threshold']
+            leading_cv_mean = per_composite['leading']['cv_mean']
+
+            return ThresholdAnalysisResult(
+                method='cart',
+                horizon=horizon,
+                target=target,
+                optimal_neutral_band=optimal_neutral,
+                optimal_strong_threshold=optimal_strong,
+                optimal_bullish_neutral_band=bull_nb,
+                optimal_bullish_strong_threshold=bull_st,
+                optimal_bearish_neutral_band=bear_nb,
+                optimal_bearish_strong_threshold=bear_st,
+                score=leading_cv_mean,
+                score_name='CV_Accuracy',
+                feature_importance=importance_agg,
+                metadata={
+                    'max_depth_param': self.max_depth,
+                    'min_samples_leaf_param': self.min_samples_leaf,
+                    'all_thresholds': all_thresholds,
+                    'per_composite': per_composite
+                }
+            )
         else:
+            # Eén boom voor de gekozen target composite.
             target_score_col = f"{target}_score"
-            optimal_neutral, optimal_strong, bull_nb, bull_st, bear_nb, bear_st = self._derive_thresholds(split_points, target_score_col)
-        
-        # Generate visualizations
-        if HAS_PLOTTING:
-            self._generate_tree_plot(tree, feature_cols, horizon, target)
-            self._generate_importance_plot(importance, horizon, target)
-        
-        return ThresholdAnalysisResult(
-            method='cart',
-            horizon=horizon,
-            target=target,
-            optimal_neutral_band=optimal_neutral,
-            optimal_strong_threshold=optimal_strong,
-            optimal_bullish_neutral_band=bull_nb,
-            optimal_bullish_strong_threshold=bull_st,
-            optimal_bearish_neutral_band=bear_nb,
-            optimal_bearish_strong_threshold=bear_st,
-            score=cv_scores.mean(),
-            score_name='CV_Accuracy',
-            feature_importance=importance,
-            metadata={
-                'train_accuracy': train_score,
-                'test_accuracy': test_score,
-                'cv_scores': cv_scores.tolist(),
-                'cv_mean': cv_scores.mean(),
-                'cv_std': cv_scores.std(),
-                'split_points': split_points,
-                'tree_depth': tree.get_depth(),
-                'n_leaves': tree.get_n_leaves(),
-                'max_depth_param': self.max_depth,
-                'min_samples_leaf_param': self.min_samples_leaf,
-                'all_thresholds': all_thresholds if target == 'all' else None
-            }
-        )
+            tree, train_score, test_score, cv_scores, importance = self._train_single_feature_tree(
+                train_df, test_df, target_score_col, horizon
+            )
+            logger.info(f"Tree trained. Train accuracy: {train_score:.3f}, "
+                       f"Test accuracy: {test_score:.3f}, CV mean: {cv_scores.mean():.3f}")
+
+            split_points = self._extract_split_points(tree, [target_score_col])
+            optimal_neutral, optimal_strong, bull_nb, bull_st, bear_nb, bear_st = self._derive_thresholds(
+                split_points, target_score_col
+            )
+
+            if HAS_PLOTTING:
+                self._generate_tree_plot(tree, [target_score_col], horizon, target)
+                self._generate_importance_plot(importance, horizon, target)
+
+            return ThresholdAnalysisResult(
+                method='cart',
+                horizon=horizon,
+                target=target,
+                optimal_neutral_band=optimal_neutral,
+                optimal_strong_threshold=optimal_strong,
+                optimal_bullish_neutral_band=bull_nb,
+                optimal_bullish_strong_threshold=bull_st,
+                optimal_bearish_neutral_band=bear_nb,
+                optimal_bearish_strong_threshold=bear_st,
+                score=cv_scores.mean(),
+                score_name='CV_Accuracy',
+                feature_importance=importance,
+                metadata={
+                    'train_accuracy': train_score,
+                    'test_accuracy': test_score,
+                    'cv_scores': cv_scores.tolist(),
+                    'cv_mean': cv_scores.mean(),
+                    'cv_std': cv_scores.std(),
+                    'split_points': split_points,
+                    'tree_depth': tree.get_depth(),
+                    'n_leaves': tree.get_n_leaves(),
+                    'max_depth_param': self.max_depth,
+                    'min_samples_leaf_param': self.min_samples_leaf,
+                    'all_thresholds': None
+                }
+            )
     
     def _extract_split_points(
         self,

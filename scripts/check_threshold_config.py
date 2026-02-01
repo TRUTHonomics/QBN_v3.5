@@ -22,43 +22,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.logging_utils import setup_logging
 from config.threshold_loader import ThresholdLoader
 
-import shutil
-from datetime import datetime
-
-# REASON: Volg logregels voor Threshold Config Health Check
-def setup_logging():
-    log_dir = PROJECT_ROOT / "_log"
-    archive_dir = log_dir / "archive"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    
-    script_name = "check_threshold_config"
-    timestamp = datetime.now().strftime("%Y%m%d-%H-%M-%S")
-    log_file = log_dir / f"{script_name}_{timestamp}.log"
-    
-    # Archiveer oude logs
-    for old_log in log_dir.glob(f"{script_name}_*.log"):
-        try:
-            shutil.move(str(old_log), str(archive_dir / old_log.name))
-        except Exception:
-            pass
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
-        ],
-        force=True
-    )
-    l = logging.getLogger(__name__)
-    l.info(f"🚀 New {script_name} run started. Logging to: {log_file}")
-    return l
-
-logger = setup_logging()
+logger = setup_logging("check_threshold_config")
 
 
 def check_global_availability() -> Dict[str, Any]:

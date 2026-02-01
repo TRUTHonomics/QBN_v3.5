@@ -16,43 +16,12 @@ import subprocess
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.logging_utils import setup_logging
 from database.db import get_cursor
 from inference.qbn_v3_cpt_generator import QBNv3CPTGenerator
 from datetime import datetime
-import shutil
 
-# REASON: Volg logregels voor QBN Pipeline Runner
-def setup_logging():
-    log_dir = PROJECT_ROOT / "_log"
-    archive_dir = log_dir / "archive"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    
-    script_name = "qbn_pipeline_runner"
-    timestamp = datetime.now().strftime("%Y%m%d-%H-%M-%S")
-    log_file = log_dir / f"{script_name}_{timestamp}.log"
-    
-    # Archiveer oude logs
-    for old_log in log_dir.glob(f"{script_name}_*.log"):
-        try:
-            shutil.move(str(old_log), str(archive_dir / old_log.name))
-        except Exception:
-            pass
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file)
-        ],
-        force=True
-    )
-    l = logging.getLogger(__name__)
-    l.info(f"🚀 New {script_name} run started. Logging to: {log_file}")
-    return l
-
-logger = setup_logging()
+logger = setup_logging("qbn_pipeline_runner")
 
 def get_selected_assets():
     """Haal asset IDs op die gemarkeerd zijn voor de huidige run."""

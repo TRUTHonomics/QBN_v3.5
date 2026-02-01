@@ -1505,8 +1505,9 @@ def run_full_training_v31():
         }
     ])
     
-    all_issues = []
-    
+    all_errors = []
+    all_warnings = []
+
     for step in steps:
         print(f"\n--- ⏳ Uitvoeren: {step['name']} ---")
         try:
@@ -1518,41 +1519,51 @@ def run_full_training_v31():
                 cwd=PROJECT_ROOT,
                 bufsize=1
             )
-            
+
             for line in iter(process.stdout.readline, ''):
                 clean_line = line.strip()
                 print(clean_line)
-                
+
                 upper_line = clean_line.upper()
-                if 'ERROR' in upper_line or 'EXCEPTION' in upper_line:
-                    all_issues.append(f"[{step['name']}] {clean_line}")
+                if 'ERROR' in upper_line or 'EXCEPTION' in upper_line or 'CRITICAL' in upper_line:
+                    all_errors.append(f"[{step['name']}] {clean_line}")
+                elif 'WARNING' in upper_line:
+                    all_warnings.append(f"[{step['name']}] {clean_line}")
 
             process.wait()
 
             if process.returncode != 0:
                 msg = f"❌ {step['name']} gefaald met returncode {process.returncode}"
                 print(msg)
-                all_issues.append(msg)
+                all_errors.append(msg)
             else:
                 print(f"✅ {step['name']} succesvol voltooid")
-                
+
         except Exception as e:
             msg = f"❌ Fout bij uitvoeren van {step['name']}: {e}"
             print(msg)
-            all_issues.append(msg)
-            
+            all_errors.append(msg)
+
     print("\n" + "="*60)
     print("🏁 TRAINING RUN SAMENVATTING")
     print(f"   Run ID: {run_id}")
     print("="*60)
-    
-    if not all_issues:
-        print("\n✅ Geen kritieke errors gevonden!")
+
+    if all_errors:
+        print(f"\n❌ ERRORS ({len(all_errors)}):")
+        for msg in all_errors:
+            print(f"  - {msg}")
     else:
-        print(f"\n⚠️  Er zijn {len(all_issues)} meldingen gevonden:\n")
-        for issue in all_issues:
-            print(f"  - {issue}")
-            
+        print("\n✅ Geen kritieke errors gevonden!")
+
+    if all_warnings:
+        print(f"\n⚠️  WARNINGS ({len(all_warnings)}):")
+        for msg in all_warnings:
+            print(f"  - {msg}")
+
+    if not all_errors and not all_warnings:
+        print("\n(Geen errors of warnings gelogd tijdens de run.)")
+
     print("\n" + "="*60)
     input("\nDruk op Enter om terug te gaan naar het menu...")
 
@@ -1705,4 +1716,6 @@ def run():
 
 
 if __name__ == '__main__':
+    from core.logging_utils import setup_logging
+    setup_logging("training_menu")
     run()

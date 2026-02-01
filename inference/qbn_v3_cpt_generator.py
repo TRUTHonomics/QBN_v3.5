@@ -1621,46 +1621,44 @@ class QBNv3CPTGenerator:
         return pd.Series(results, index=df.index)
 
     def _setup_file_logging(self, asset_id: Optional[int] = None):
-        log_dir = os.path.join(os.getcwd(), '_log')
-        archive_dir = os.path.join(log_dir, 'archive')
-        os.makedirs(log_dir, exist_ok=True)
-        os.makedirs(archive_dir, exist_ok=True)
-        
+        # KFL logregels: _log/, {YYMMDD-HH-MM-ss}_{scriptname}.log, archive *_{scriptname}.log, format timestamp, level, message
+        from pathlib import Path
+        project_root = Path(__file__).resolve().parent.parent
+        log_dir = project_root / "_log"
+        archive_dir = log_dir / "archive"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
         script_name = "qbn_v3_cpt_generator"
-        ts = datetime.now().strftime("%Y%m%d-%H-%M-%S")
-        log_file = os.path.join(log_dir, f"{script_name}_{ts}.log")
-        
-        # REASON: Volg logregels - archiveer oude logs van dit script
-        import glob
-        for old_log in glob.glob(os.path.join(log_dir, f"{script_name}_*.log")):
+        ts = datetime.now().strftime("%y%m%d-%H-%M-%S")
+        log_file = log_dir / f"{ts}_{script_name}.log"
+
+        for old_log in log_dir.glob(f"*_{script_name}.log"):
             try:
-                shutil.move(old_log, os.path.join(archive_dir, os.path.basename(old_log)))
+                if old_log.is_file():
+                    shutil.move(str(old_log), str(archive_dir / old_log.name))
             except Exception:
                 pass
-                
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-        
-        # REASON: Voorkom dubbele handlers
+
+        file_fmt = "%(asctime)s, %(levelname)s, %(message)s"
+        date_fmt = "%Y-%m-%d %H:%M:%S"
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter(file_fmt, datefmt=date_fmt))
+
         root_logger = logging.getLogger()
-        
-        # EXPL: Als we al een rolling_backtest of strategy_finder handler hebben, overschrijf dan niet de root handlers
-        # Dit voorkomt dat de generator de logging van de backtest/strategy_finder 'hijackt'.
-        is_backtest = any('rolling_backtest' in getattr(h, 'baseFilename', '') for h in root_logger.handlers)
-        is_strategy_finder = any('strategy_finder' in getattr(h, 'baseFilename', '') for h in root_logger.handlers)
-        
+        is_backtest = any("rolling_backtest" in getattr(h, "baseFilename", "") for h in root_logger.handlers)
+        is_strategy_finder = any("strategy_finder" in getattr(h, "baseFilename", "") for h in root_logger.handlers)
+
         if not is_backtest and not is_strategy_finder:
             for h in root_logger.handlers[:]:
-                if isinstance(h, logging.FileHandler) and h.baseFilename.endswith('.log'):
+                if isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "").endswith(".log"):
                     root_logger.removeHandler(h)
             root_logger.addHandler(file_handler)
         else:
-            # In backtest/strategy_finder modus: log generator output alleen naar eigen file, niet naar root
-            # Dit houdt de backtest/strategy_finder log schoon en de generator log gedetailleerd.
             logger.addHandler(file_handler)
             logger.propagate = False
-            
-        logger.info(f"🚀 New v3 CPT run started. Logging to: {log_file}")
+
+        logger.info("Started. Logging to: %s", log_file)
 
     def _snapshot_db_config(self, asset_id: Optional[int] = None):
         val_dir = os.path.join(os.getcwd(), '_validation', 'config_snapshots')

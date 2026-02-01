@@ -460,4 +460,6 @@ def run():
 
 
 if __name__ == '__main__':
+    from core.logging_utils import setup_logging
+    setup_logging("inference_menu")
     run()
