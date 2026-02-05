@@ -14,6 +14,7 @@ Dit script valideert:
 
 import sys
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Set, List, Tuple, Any
 import argparse
@@ -162,7 +163,9 @@ def validate_db_sync(conn, yaml_class, yaml_signals, yaml_disc) -> Tuple[bool, L
     # Vergelijk discretization
     disc_errors = 0
     for ind, thresholds in yaml_disc.items():
-        if ind == 'metadata': continue
+        # REASON: Skip metadata en horizon-specifieke sections
+        if ind in ('metadata', 'horizons'):
+            continue
         if ind not in db_disc:
             messages.append(f"  ❌ Indicator {ind} ontbreekt in qbn.signal_discretization")
             disc_errors += 1

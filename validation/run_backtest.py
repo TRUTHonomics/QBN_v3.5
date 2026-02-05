@@ -1,9 +1,10 @@
 """
-Backtest Runner voor QBN v3.4.
+Backtest Runner voor QBN v3.5.
 
 Dit script wordt aangeroepen door het TSEM API endpoint en voert
 een volledige backtest uit op basis van de configuratie in de database.
-Gebruikt de moderne TradeSimulator engine (v3.4).
+Gebruikt de moderne TradeSimulator engine (v3.5).
+Entry-side: infer_batch(); position-side: infer_position() per actieve trade.
 
 Usage:
     python -m validation.run_backtest --backtest-id <backtest_id>
@@ -13,8 +14,11 @@ import argparse
 import logging
 import sys
 import pandas as pd
+import numpy as np
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Any, Optional, Tuple, List
 
 # Setup logging
 from core.logging_utils import setup_logging
@@ -23,11 +27,33 @@ logger = logging.getLogger(__name__)
 
 from database.db import get_cursor
 from validation.backtest_config import BacktestConfig
-from validation.trade_simulator import TradeSimulator
+from validation.trade_simulator import TradeSimulator, Trade
 from simulation.data_loader import BacktestDataLoader
 from inference.qbn_v3_cpt_generator import QBNv3CPTGenerator
 from inference.gpu.gpu_inference_engine import GPUInferenceEngine
-from inference.trade_aligned_inference import DualInferenceResult
+from inference.node_types import SemanticClass
+
+
+@dataclass
+class BacktestInferenceState:
+    """
+    Lightweight inference state voor backtest: entry-side velden + optioneel position-side.
+    Vervangt DualInferenceResult in run_backtest (geen PositionPredictionResult type).
+    """
+    # Entry-side (uit infer_batch)
+    regime: str = ""
+    trade_hypothesis: str = ""
+    leading_composite: str = ""
+    coincident_composite: str = ""
+    confirming_composite: str = ""
+    timestamp: Optional[datetime] = None
+    asset_id: int = 0
+    # Position-side (uit infer_position of defaults)
+    momentum_prediction: str = ""
+    volatility_regime: str = "normal"
+    exit_timing: str = "hold"
+    position_prediction: str = ""
+    position_confidence: str = "medium"
 
 
 def load_backtest_config(backtest_id: str) -> BacktestConfig:
@@ -171,148 +197,177 @@ def save_trades_to_db(backtest_id: str, trades: list):
         cur.execute("INSERT INTO qbn.backtest_trades (backtest_id, entry_time, exit_time, direction, entry_price, exit_price, quantity, pnl_usd, pnl_pct, exit_reason, duration_hours, mae_pct, mfe_pct) VALUES " + args_str)
 
 
+def run_backtest_internal(config: BacktestConfig) -> Tuple[Dict[str, Any], List[Trade]]:
+    """
+    Voer backtest uit zonder database interactie (voor validation cycle of tests).
+
+    Args:
+        config: BacktestConfig object
+
+    Returns:
+        Tuple[metrics_dict, list_of_closed_trades]
+    """
+    loader = BacktestDataLoader(config.asset_id)
+    data_start = config.start_date - pd.Timedelta(days=config.train_window_days)
+    logger.info("📥 Fetching full dataset...")
+    full_df = loader.fetch_data(data_start, config.end_date)
+    if full_df.empty:
+        raise ValueError("Geen data gevonden voor opgegeven periode")
+    if full_df["time_1"].dt.tz is None:
+        full_df["time_1"] = full_df["time_1"].dt.tz_localize("UTC")
+    full_df.set_index("time_1", inplace=True)
+    full_df.sort_index(inplace=True)
+
+    train_end = config.start_date
+    train_df = full_df.loc[:train_end].copy()
+    test_df = full_df.loc[train_end:].copy()
+    if len(train_df) < 1000:
+        raise ValueError(f"Te weinig data voor training ({len(train_df)} rijen)")
+
+    logger.info(f"🧠 Training BN op {len(train_df)} candles...")
+    generator = QBNv3CPTGenerator()
+    
+    # REASON: Preprocess train data om htf_regime en composite labels toe te voegen
+    # EXPL: generate_htf_regime_cpt verwacht dat data['htf_regime'] al bestaat
+    # Reset index first om pandas ambiguïteit te vermijden ('time_1' mag geen index én kolom zijn)
+    train_df_reset = train_df.reset_index()
+    train_df_reset = generator.preprocess_dataset(train_df_reset, config.asset_id)
+    # Set index terug voor rest van processing
+    train_df = train_df_reset.set_index("time_1")
+    
+    cpts = {
+        "HTF_Regime": generator.generate_htf_regime_cpt(config.asset_id, data=train_df),
+        "Trade_Hypothesis": generator.generate_trade_hypothesis_cpt(config.asset_id, data=train_df),
+        "Prediction_1h": generator.generate_prediction_cpt(config.asset_id, "1h", data=train_df),
+        "Prediction_4h": generator.generate_prediction_cpt(config.asset_id, "4h", data=train_df),
+        "Prediction_1d": generator.generate_prediction_cpt(config.asset_id, "1d", data=train_df),
+        "Momentum_Prediction": generator.generate_momentum_prediction_cpt(config.asset_id, data=train_df),
+        "Volatility_Regime": generator.generate_volatility_regime_cpt(config.asset_id, data=train_df),
+        "Exit_Timing": generator.generate_exit_timing_cpt(config.asset_id, data=train_df),
+        "Position_Prediction": generator._generate_position_prediction_cpt(config.asset_id, data=train_df),
+    }
+    generator.load_signal_classification(config.asset_id, "1h")
+    for sc in SemanticClass:
+        cpts[f"{sc.value.capitalize()}_Composite"] = generator.generate_composite_cpt(
+            config.asset_id, sc, data=train_df, horizon="1h"
+        )
+
+    logger.info(f"🔮 Running inference op {len(test_df)} candles...")
+    engine = GPUInferenceEngine(
+        cpts=cpts,
+        signal_classification=generator.signal_aggregator.signal_classification,
+        threshold_loader=generator._get_threshold_loader(config.asset_id, "1h"),
+    )
+    predictions = engine.infer_batch(test_df)
+    raw_scores = predictions.get("raw_composite_scores") or {}
+
+    def _scalar(arr, idx: int) -> float:
+        """Haal scalar uit array (numpy/cupy) voor index idx."""
+        if arr is None or idx >= len(arr):
+            return 0.0
+        try:
+            return float(arr[idx])
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _current_scores(i: int) -> Dict[str, float]:
+        return {
+            "leading": _scalar(raw_scores.get("leading"), i) if raw_scores else 0.0,
+            "coincident": _scalar(raw_scores.get("coincident"), i) if raw_scores else 0.0,
+            "confirming": _scalar(raw_scores.get("confirming"), i) if raw_scores else 0.0,
+        }
+
+    logger.info("📈 Running Trade Simulator...")
+    simulator = TradeSimulator(config)
+    for i in range(len(test_df)):
+        row = test_df.iloc[i]
+        current_time = row.name if isinstance(test_df.index, pd.DatetimeIndex) else row["time_1"]
+        current_price = float(row.get("close", row.get("close_60", 0)))
+        atr = float(row.get("atr_14", row.get("atr", 20.0)))
+
+        entry_state = BacktestInferenceState(
+            asset_id=config.asset_id,
+            timestamp=current_time,
+            regime=str(predictions["regime"][i]) if i < len(predictions["regime"]) else "",
+            trade_hypothesis=str(predictions["trade_hypothesis"][i]) if i < len(predictions["trade_hypothesis"]) else "",
+            leading_composite=str(predictions["leading_composite"][i]) if i < len(predictions["leading_composite"]) else "neutral",
+            coincident_composite=str(predictions["coincident_composite"][i]) if i < len(predictions["coincident_composite"]) else "neutral",
+            confirming_composite=str(predictions["confirming_composite"][i]) if i < len(predictions["confirming_composite"]) else "neutral",
+        )
+
+        if not simulator.open_trades:
+            should_enter, direction = simulator.should_enter_trade(entry_state)
+            if should_enter and direction:
+                entry_scores = _current_scores(i)
+                simulator.open_trade(
+                    entry_state,
+                    current_price,
+                    atr,
+                    direction,
+                    entry_composite_scores=entry_scores,
+                )
+        else:
+            latest_inference = entry_state
+            for trade in simulator.open_trades:
+                if trade.entry_composite_scores is None:
+                    continue
+                time_since_min = (current_time - trade.entry_timestamp).total_seconds() / 60.0
+                if trade.direction == "long":
+                    current_pnl_atr = (current_price - trade.entry_price) / trade.atr_at_entry
+                else:
+                    current_pnl_atr = (trade.entry_price - current_price) / trade.atr_at_entry
+                pos_result = engine.infer_position(
+                    current_scores=_current_scores(i),
+                    entry_scores=trade.entry_composite_scores,
+                    time_since_entry_min=time_since_min,
+                    current_pnl_atr=current_pnl_atr,
+                )
+                latest_inference = BacktestInferenceState(
+                    momentum_prediction=pos_result.get("momentum_prediction", ""),
+                    volatility_regime=pos_result.get("volatility_regime", "normal"),
+                    exit_timing=pos_result.get("exit_timing", "hold"),
+                    position_prediction=pos_result.get("position_prediction", ""),
+                    position_confidence=pos_result.get("position_confidence", "medium"),
+                )
+                break
+
+            synthetic_ohlc = pd.DataFrame([{
+                "time": current_time,
+                "open": row.get("open", current_price),
+                "high": row.get("high", current_price),
+                "low": row.get("low", current_price),
+                "close": current_price,
+            }])
+            simulator.update_open_trades(current_time, synthetic_ohlc, latest_inference)
+
+    metrics = simulator.get_metrics()
+    return metrics, simulator.closed_trades
+
+
 def run_backtest(backtest_id: str):
     """
-    Voer backtest uit met TradeSimulator.
-    
+    Voer backtest uit met TradeSimulator en schrijf resultaten naar DB.
+
     Args:
-        backtest_id: Backtest run ID
+        backtest_id: Backtest run ID uit qbn.backtest_runs
     """
     try:
         logger.info(f"🚀 Start backtest: {backtest_id}")
-        
-        # Update status naar 'running'
-        update_backtest_status(backtest_id, 'running')
-        
-        # Laad configuratie
+        update_backtest_status(backtest_id, "running")
         config = load_backtest_config(backtest_id)
-        logger.info(f"📋 Configuratie geladen: Asset {config.asset_id}, "
-                   f"{config.start_date.date()} tot {config.end_date.date()}")
-        
-        # 1. Data Loading
-        loader = BacktestDataLoader(config.asset_id)
-        # We hebben data nodig vanaf start_date - train_window
-        data_start = config.start_date - pd.Timedelta(days=config.train_window_days)
-        
-        logger.info("📥 Fetching full dataset...")
-        full_df = loader.fetch_data(data_start, config.end_date)
-        
-        if full_df.empty:
-            raise ValueError("Geen data gevonden voor opgegeven periode")
-            
-        # Zorg voor UTC index
-        if full_df['time_1'].dt.tz is None:
-            full_df['time_1'] = full_df['time_1'].dt.tz_localize('UTC')
-        full_df.set_index('time_1', inplace=True, drop=False)
-        full_df.sort_index(inplace=True)
-        
-        # 2. Preprocessing & CPT Generation (Single Pass for Backtest)
-        # In een echte walk-forward zou dit in een loop moeten, maar voor backtest
-        # doen we vaak 1 training op de initiële window en dan rolling inference.
-        # Voor nu: Train op initieel window, infer op rest.
-        
-        train_end = config.start_date
-        train_df = full_df.loc[:train_end].copy()
-        test_df = full_df.loc[train_end:].copy()
-        
-        if len(train_df) < 1000:
-            raise ValueError(f"Te weinig data voor training ({len(train_df)} rijen)")
-            
-        logger.info(f"🧠 Training BN op {len(train_df)} candles...")
-        generator = QBNv3CPTGenerator()
-        
-        # Genereer CPTs
-        cpts = {
-            'HTF_Regime': generator.generate_htf_regime_cpt(config.asset_id, data=train_df),
-            'Trade_Hypothesis': generator.generate_trade_hypothesis_cpt(config.asset_id, data=train_df),
-            'Prediction_1h': generator.generate_prediction_cpt(config.asset_id, '1h', data=train_df),
-            'Prediction_4h': generator.generate_prediction_cpt(config.asset_id, '4h', data=train_df),
-            'Prediction_1d': generator.generate_prediction_cpt(config.asset_id, '1d', data=train_df),
-            # v3.4 Position Nodes
-            'Momentum_Prediction': generator.generate_momentum_prediction_cpt(config.asset_id, data=train_df),
-            'Volatility_Regime': generator.generate_volatility_regime_cpt(config.asset_id, data=train_df),
-            'Exit_Timing': generator.generate_exit_timing_cpt(config.asset_id, data=train_df),
-            'Position_Prediction': generator._generate_position_prediction_cpt(config.asset_id, data=train_df)
-        }
-        
-        # Composites
-        from inference.node_types import SemanticClass
-        generator.load_signal_classification(config.asset_id, '1h')
-        for sc in SemanticClass:
-            cpts[f"{sc.value.capitalize()}_Composite"] = generator.generate_composite_cpt(config.asset_id, sc, data=train_df, horizon='1h')
-            
-        # 3. Inference
-        logger.info(f"🔮 Running inference op {len(test_df)} candles...")
-        engine = GPUInferenceEngine(
-            cpts=cpts,
-            signal_classification=generator.signal_aggregator.signal_classification,
-            threshold_loader=generator._get_threshold_loader(config.asset_id, '1h')
+        logger.info(
+            f"📋 Configuratie geladen: Asset {config.asset_id}, "
+            f"{config.start_date.date()} tot {config.end_date.date()}"
         )
-        
-        predictions = engine.infer_batch(test_df)
-        
-        # 4. Simulation
-        logger.info("📈 Running Trade Simulator...")
-        simulator = TradeSimulator(config)
-        
-        # Loop door test data
-        for i in range(len(test_df)):
-            row = test_df.iloc[i]
-            current_time = row['time_1']
-            current_price = row.get('close', row.get('close_60', 0))
-            atr = row.get('atr_14', row.get('atr', 20.0))
-            
-            # Bouw resultaat object
-            inference_result = DualInferenceResult(
-                asset_id=config.asset_id,
-                timestamp=current_time,
-                regime=predictions['regime'][i],
-                trade_hypothesis=predictions['trade_hypothesis'][i],
-                leading_composite=predictions.get('leading_composite', ['neutral']*len(test_df))[i],
-                coincident_composite=predictions.get('coincident_composite', ['neutral']*len(test_df))[i],
-                confirming_composite=predictions.get('confirming_composite', ['neutral']*len(test_df))[i],
-                entry_predictions={}, # Niet nodig voor sim
-                entry_distributions={}, # Niet nodig voor sim
-                # v3.4 Management Signals
-                momentum_prediction=predictions.get('momentum_prediction', ['neutral']*len(test_df))[i],
-                volatility_regime=predictions.get('volatility_regime', ['normal']*len(test_df))[i],
-                exit_timing=predictions.get('exit_timing', ['hold']*len(test_df))[i],
-                position_prediction=predictions.get('position_prediction', ['hold']*len(test_df))[i]
-            )
-            
-            # Entry Logic
-            if not simulator.open_trades:
-                should_enter, direction = simulator.should_enter_trade(inference_result)
-                if should_enter and direction:
-                    simulator.open_trade(inference_result, current_price, atr, direction)
-            
-            # Update Logic (gebruik 60m candle als 1m synthetic)
-            if simulator.open_trades:
-                synthetic_ohlc = pd.DataFrame([{
-                    'time': current_time,
-                    'open': row.get('open', current_price),
-                    'high': row.get('high', current_price),
-                    'low': row.get('low', current_price),
-                    'close': current_price
-                }])
-                simulator.update_open_trades(current_time, synthetic_ohlc, inference_result)
-        
-        # 5. Results
-        metrics = simulator.get_metrics()
-        
-        # Save trades
-        save_trades_to_db(backtest_id, simulator.closed_trades)
-        
-        # Update status naar 'completed'
-        update_backtest_status(backtest_id, 'completed', metrics=metrics)
-        
+        metrics, trades = run_backtest_internal(config)
+        save_trades_to_db(backtest_id, trades)
+        update_backtest_status(backtest_id, "completed", metrics=metrics)
         logger.info(f"✅ Backtest {backtest_id} succesvol voltooid")
         logger.info(f"   PnL: ${metrics.get('total_pnl_usd', 0):.2f} ({metrics.get('total_pnl_pct', 0):.2f}%)")
         logger.info(f"   Trades: {metrics.get('total_trades', 0)}")
-        
     except Exception as e:
         logger.error(f"❌ Backtest {backtest_id} gefaald: {e}", exc_info=True)
-        update_backtest_status(backtest_id, 'failed', str(e))
+        update_backtest_status(backtest_id, "failed", str(e))
         raise
 
 

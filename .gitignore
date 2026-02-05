@@ -165,6 +165,9 @@ _backup/*
 !.env.example
 # Optional: grote binaire/gegenereerde bestanden
 *.pdf
+# Dagster run artefacts (keep only config)
+dagster_home/compute_logs/
+dagster_home/storage/
 # Config YAML/JSON wel meenemen; alleen specifieke uitzonderingen hierboven
 
 

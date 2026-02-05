@@ -491,10 +491,14 @@ class GPUCPTGenerator:
         weighted_scores = xp.sum(gpu_polarity * gpu_weights, axis=1)
         
         # 3. Normalisatie
-        # REASON: Gebruik dynamische normalisatie op basis van de som van de absolute gewichten.
-        # Max mogelijke score is som(abs(gewichten) * max_polarity). Max polarity is 2.
-        max_possible_score = xp.sum(xp.abs(gpu_weights)) * 2.0
+        # REASON: Lopez de Prado formule: sum(polarity * weight) / sum(|weight|)
+        # Consistent met ThresholdOptimizer. v3.5 FIX: Verwijderd '* 2.0' factor die
+        # score-distributie halveert en zorgt voor neutral-bias.
+        max_possible_score = xp.sum(xp.abs(gpu_weights))
         normalized_scores = weighted_scores / max_possible_score if max_possible_score > 0 else xp.zeros_like(weighted_scores)
+        
+        # Clip naar [-1, +1] voor veiligheid (consistent met ThresholdOptimizer)
+        normalized_scores = xp.clip(normalized_scores, -1.0, 1.0)
         
         # 4. Thresholding
         final_states = xp.full(len(signals_array), 0, dtype=xp.int32) # Default Neutral

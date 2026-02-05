@@ -126,8 +126,19 @@ class SignalAlphaAnalyzer:
             return False
 
         # 1b. Bepaal horizon-specifieke outcomes en Uniqueness
-        df_final['time_1'] = pd.to_datetime(df_final['time_1'])
-        df_final['hit_timestamp'] = df_final['time_1'] + pd.to_timedelta(df_final['first_significant_time_min'], unit='m')
+        # REASON: first_significant_time_min kan NaN zijn (bijv. barrier 'none'),
+        # wat RuntimeWarning kan geven in pandas bij to_timedelta cast.
+        # REASON: utc=True + datetime64[ns, UTC] voorkomt tz-naive/tz-aware en [us]/[ns] mismatch (Pandas 2.x).
+        df_final['time_1'] = pd.to_datetime(df_final['time_1'], utc=True, errors='coerce')
+        df_final['hit_timestamp'] = pd.Series(pd.NaT, index=df_final.index, dtype='datetime64[ns, UTC]')
+        mask_valid_time = df_final['time_1'].notna()
+        mask_valid_min = df_final['first_significant_time_min'].notna()
+        mask_valid = mask_valid_time & mask_valid_min
+        if mask_valid.any():
+            df_final.loc[mask_valid, 'hit_timestamp'] = (
+                df_final.loc[mask_valid, 'time_1']
+                + pd.to_timedelta(df_final.loc[mask_valid, 'first_significant_time_min'], unit='m')
+            )
         
         # Uniqueness (1/N)
         mask_hit = (df_final['first_significant_barrier'] != 'none') & (df_final['first_significant_barrier'].notna())
@@ -191,7 +202,7 @@ class SignalAlphaAnalyzer:
             del df_cat # Vrijmaken geheugen
 
         self.df = df_final
-        self.df['time_1'] = pd.to_datetime(self.df['time_1'])
+        self.df['time_1'] = pd.to_datetime(self.df['time_1'], utc=True, errors='coerce')
         self.metadata['total_rows'] = len(self.df)
         
         # Check op ontbrekende data

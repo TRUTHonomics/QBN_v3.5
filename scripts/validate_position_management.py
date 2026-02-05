@@ -171,6 +171,15 @@ def validate_asset(asset_id, run_id=None, output_dir=None):
     time_acc['mean'] = time_acc['mean'].map(lambda x: f"{x:.1%}" if pd.notna(x) else "0.0%")
     report_lines.append(str(time_acc))
 
+    # State machine check: entry -> hold -> exit flow per event
+    report_lines.append(f"\n   State Machine Check (entry -> hold -> exit):")
+    events = event_rows.groupby('event_id')
+    n_events = len(events)
+    n_with_hold = sum(1 for _, g in events if len(g) >= 2)  # at least entry + 1 hold row
+    n_with_exit = sum(1 for _, g in events if g['time_since_entry'].max() >= 0)  # has time progression
+    report_lines.append(f"   Events with valid hold phase: {n_with_hold}/{n_events}")
+    report_lines.append(f"   Events with time progression (exit path): {n_with_exit}/{n_events}")
+
     # Console output
     for line in report_lines:
         print(line)

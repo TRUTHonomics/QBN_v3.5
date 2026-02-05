@@ -1,0 +1,60 @@
+# Dagster instance config (Fase 1)
+#
+# REASON: Metadata/run storage in Postgres (kflhyper) zodat Dagster state
+# persistent is en zichtbaar blijft in de UI.
+
+run_storage:
+  module: dagster_postgres.run_storage
+  class: PostgresRunStorage
+  config:
+    postgres_db:
+      hostname:
+        env: DB_HOST
+      port:
+        env: DB_PORT
+      db_name:
+        env: DB_NAME
+      username:
+        env: DB_USER
+      password:
+        env: DB_PASS
+
+event_log_storage:
+  module: dagster_postgres.event_log
+  class: PostgresEventLogStorage
+  config:
+    postgres_db:
+      hostname:
+        env: DB_HOST
+      port:
+        env: DB_PORT
+      db_name:
+        env: DB_NAME
+      username:
+        env: DB_USER
+      password:
+        env: DB_PASS
+
+schedule_storage:
+  module: dagster_postgres.schedule_storage
+  class: PostgresScheduleStorage
+  config:
+    postgres_db:
+      hostname:
+        env: DB_HOST
+      port:
+        env: DB_PORT
+      db_name:
+        env: DB_NAME
+      username:
+        env: DB_USER
+      password:
+        env: DB_PASS
+
+# Optioneel: behoud compute logs op disk binnen DAGSTER_HOME
+compute_logs:
+  module: dagster.core.storage.local_compute_log_manager
+  class: LocalComputeLogManager
+  config:
+    base_dir: /app/dagster_home/compute_logs
+

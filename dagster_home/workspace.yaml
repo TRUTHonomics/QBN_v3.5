@@ -1,0 +1,13 @@
+load_from:
+  - python_file:
+      # REASON: workspace.yaml staat in /app/dagster_home, code in /app/dagster_qbn
+      relative_path: ../dagster_qbn/definitions.py
+      location_name: qbn_v4
+      working_directory: /app
+  - python_file:
+      # REASON: KFL_backend_GPU_v6 code location (via volume mount /app_kfl)
+      # relative_path is relatief t.o.v. workspace.yaml (/app/dagster_home)
+      relative_path: ../../app_kfl/dagster_kfl/definitions.py
+      location_name: kfl_v6
+      working_directory: /app_kfl
+

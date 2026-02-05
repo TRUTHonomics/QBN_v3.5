@@ -7,7 +7,7 @@ FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
 
 # Metadata
 LABEL maintainer="KlineFuturesLab Development Team"
-LABEL version="1.0.0"
+LABEL version="4.0.0"
 LABEL description="GPU environment for QuantBayes Nexus Bayesian inference"
 
 # Environment variables

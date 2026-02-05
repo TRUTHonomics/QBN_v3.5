@@ -32,8 +32,8 @@ COVERAGE_THRESHOLD = 0.5    # Min 50% coverage for valid CPT (otherwise reduce s
 FRESHNESS_THRESHOLD_HOURS = 24  # Refresh CPTs if older than 24h
 
 # Model Version
-# v3.1: Entry_Confidence verwijderd uit Prediction node parents
-MODEL_VERSION = '3.1'
+# v4.0: Dagster orchestration geïntegreerd, container naming geharmoniseerd
+MODEL_VERSION = '4.0'
 
 # =========================================================================
 # DEPRECATED: Composite Aggregation Thresholds

@@ -626,8 +626,46 @@ class QBNv3CPTGenerator:
         
         # 3. Voeg Current_PnL_ATR toe (moet in 'data' zitten of berekend worden)
         if 'current_pnl_atr' not in in_event_data.columns:
-            logger.warning("current_pnl_atr not found in data, defaulting to 0.0")
-            in_event_data['current_pnl_atr'] = 0.0
+            # REASON: Position_Prediction en Exit_Timing gebruiken PnL-states in ATR units.
+            # Zonder current_pnl_atr valt alles terug naar 'breakeven' en verliest de CPT discriminatie.
+            if (
+                'return_since_entry' in in_event_data.columns
+                and 'entry_atr' in in_event_data.columns
+                and 'entry_close' in in_event_data.columns
+            ):
+                entry_atr = pd.to_numeric(in_event_data['entry_atr'], errors='coerce')
+                entry_close = pd.to_numeric(in_event_data['entry_close'], errors='coerce')
+                ret = pd.to_numeric(in_event_data['return_since_entry'], errors='coerce')
+
+                # return_since_entry = (current_close - entry_close) / entry_close (direction-aware)
+                # current_pnl_atr = (current_close - entry_close) / entry_atr
+                # => current_pnl_atr = ret * entry_close / entry_atr
+                pnl_atr = (ret * entry_close) / entry_atr.replace(0, np.nan)
+                in_event_data['current_pnl_atr'] = pnl_atr.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+                avg_abs = float(np.nanmean(np.abs(in_event_data['current_pnl_atr'].to_numpy())))
+                logger.info(f"Computed current_pnl_atr from return_since_entry (avg_abs={avg_abs:.3f})")
+            elif (
+                'return_since_entry' in in_event_data.columns
+                and 'entry_atr' in in_event_data.columns
+                and 'close' in in_event_data.columns
+            ):
+                # Fallback: derive entry_close uit current close en return (entry_close = close / (1 + ret))
+                # REASON: sommige datasets missen entry_close kolom, maar hebben wel close + return_since_entry.
+                entry_atr = pd.to_numeric(in_event_data['entry_atr'], errors='coerce')
+                close = pd.to_numeric(in_event_data['close'], errors='coerce')
+                ret = pd.to_numeric(in_event_data['return_since_entry'], errors='coerce')
+
+                denom = (1.0 + ret).replace(0, np.nan)
+                entry_close_est = close / denom
+                pnl_atr = (ret * entry_close_est) / entry_atr.replace(0, np.nan)
+                in_event_data['current_pnl_atr'] = pnl_atr.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+                avg_abs = float(np.nanmean(np.abs(in_event_data['current_pnl_atr'].to_numpy())))
+                logger.info(f"Computed current_pnl_atr via derived entry_close (avg_abs={avg_abs:.3f})")
+            else:
+                logger.warning("current_pnl_atr not found and cannot be computed, defaulting to 0.0")
+                in_event_data['current_pnl_atr'] = 0.0
 
         # 4. Genereer CPT
         cpt_results = self.position_prediction_gen.generate_cpt(in_event_data)
@@ -1335,6 +1373,9 @@ class QBNv3CPTGenerator:
         v3.3 FIX: leading_score wordt nu ook berekend (was eerder ontbrekend, waardoor
         event detection faalde en v3.3 nodes altijd neutral waren).
         
+        v3.5 FIX: Gebruikt nu Lopez de Prado formule: sum(signal * weight * polarity) / sum(|weight|)
+        consistent met ThresholdOptimizer. Voorheen: sum(signal * polarity) / N.
+        
         Args:
             data: DataFrame met individuele signaal kolommen (bijv. rsi_60, macd_60)
             asset_id: Asset ID voor logging
@@ -1363,59 +1404,86 @@ class QBNv3CPTGenerator:
                 'polarity': polarity_map.get(polarity.lower(), 0)
             })
         
-        logger.info(f"      Found {len(config['LEADING'])} LEADING, {len(config['COINCIDENT'])} COINCIDENT, {len(config['CONFIRMING'])} CONFIRMING signals")
+        # Laad weights uit qbn.signal_weights (fallback naar 1.0)
+        # REASON: HYPOTHESIS layer (LEADING) gebruikt altijd 1h weights, CONFIDENCE layer horizon-specifiek
+        weights_data = {}  # (signal_name_60, horizon) -> weight
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT ON (signal_name, horizon)
+                    signal_name, horizon, weight
+                FROM qbn.signal_weights
+                WHERE (asset_id = %s OR asset_id = 0)
+                ORDER BY signal_name, horizon, asset_id DESC
+            """, (asset_id,))
+            for signal_name, horizon, weight in cur.fetchall():
+                weights_data[(signal_name.lower(), horizon)] = float(weight or 1.0)
         
-        # Bereken leading_score (v3.3 FIX - was eerder ontbrekend!)
+        logger.info(f"      Found {len(config['LEADING'])} LEADING, {len(config['COINCIDENT'])} COINCIDENT, {len(config['CONFIRMING'])} CONFIRMING signals")
+        logger.info(f"      Loaded {len(weights_data)} signal weights from qbn.signal_weights")
+        
+        # Bereken leading_score met Lopez de Prado formule
         if config['LEADING']:
             lead_scores = np.zeros(len(data))
+            total_weight = 0.0
             valid_signals = 0
             for sig in config['LEADING']:
                 if sig['col_name'] in data.columns:
                     signal_values = pd.to_numeric(data[sig['col_name']], errors='coerce').fillna(0).values
-                    lead_scores += signal_values * sig['polarity']
+                    # LEADING is HYPOTHESIS layer -> gebruik 1h weights
+                    weight = weights_data.get((sig['col_name'], '1h'), 1.0)
+                    lead_scores += signal_values * sig['polarity'] * weight
+                    total_weight += abs(weight)
                     valid_signals += 1
             
-            if valid_signals > 0:
-                data['leading_score'] = lead_scores / valid_signals
-                logger.info(f"      leading_score: {valid_signals} signals, range [{data['leading_score'].min():.3f}, {data['leading_score'].max():.3f}]")
+            if total_weight > 0:
+                data['leading_score'] = lead_scores / total_weight
+                logger.info(f"      leading_score: {valid_signals} signals, total_weight={total_weight:.1f}, range [{data['leading_score'].min():.3f}, {data['leading_score'].max():.3f}]")
             else:
                 data['leading_score'] = 0.0
                 logger.warning("      ⚠️ No LEADING signal columns found in data")
         else:
             data['leading_score'] = 0.0
         
-        # Bereken coincident_score
+        # Bereken coincident_score met Lopez de Prado formule
         if config['COINCIDENT']:
             coin_scores = np.zeros(len(data))
+            total_weight = 0.0
             valid_signals = 0
             for sig in config['COINCIDENT']:
                 if sig['col_name'] in data.columns:
                     signal_values = pd.to_numeric(data[sig['col_name']], errors='coerce').fillna(0).values
-                    coin_scores += signal_values * sig['polarity']
+                    # COINCIDENT is CONFIDENCE layer -> gebruik 1h weights als default
+                    weight = weights_data.get((sig['col_name'], '1h'), 1.0)
+                    coin_scores += signal_values * sig['polarity'] * weight
+                    total_weight += abs(weight)
                     valid_signals += 1
             
-            if valid_signals > 0:
-                data['coincident_score'] = coin_scores / valid_signals
-                logger.info(f"      coincident_score: {valid_signals} signals, range [{data['coincident_score'].min():.3f}, {data['coincident_score'].max():.3f}]")
+            if total_weight > 0:
+                data['coincident_score'] = coin_scores / total_weight
+                logger.info(f"      coincident_score: {valid_signals} signals, total_weight={total_weight:.1f}, range [{data['coincident_score'].min():.3f}, {data['coincident_score'].max():.3f}]")
             else:
                 data['coincident_score'] = 0.0
                 logger.warning("      ⚠️ No COINCIDENT signal columns found in data")
         else:
             data['coincident_score'] = 0.0
         
-        # Bereken confirming_score
+        # Bereken confirming_score met Lopez de Prado formule
         if config['CONFIRMING']:
             conf_scores = np.zeros(len(data))
+            total_weight = 0.0
             valid_signals = 0
             for sig in config['CONFIRMING']:
                 if sig['col_name'] in data.columns:
                     signal_values = pd.to_numeric(data[sig['col_name']], errors='coerce').fillna(0).values
-                    conf_scores += signal_values * sig['polarity']
+                    # CONFIRMING is CONFIDENCE layer -> gebruik 1h weights als default
+                    weight = weights_data.get((sig['col_name'], '1h'), 1.0)
+                    conf_scores += signal_values * sig['polarity'] * weight
+                    total_weight += abs(weight)
                     valid_signals += 1
             
-            if valid_signals > 0:
-                data['confirming_score'] = conf_scores / valid_signals
-                logger.info(f"      confirming_score: {valid_signals} signals, range [{data['confirming_score'].min():.3f}, {data['confirming_score'].max():.3f}]")
+            if total_weight > 0:
+                data['confirming_score'] = conf_scores / total_weight
+                logger.info(f"      confirming_score: {valid_signals} signals, total_weight={total_weight:.1f}, range [{data['confirming_score'].min():.3f}, {data['confirming_score'].max():.3f}]")
             else:
                 data['confirming_score'] = 0.0
                 logger.warning("      ⚠️ No CONFIRMING signal columns found in data")

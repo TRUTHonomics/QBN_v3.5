@@ -50,3 +50,8 @@ pytest-cov>=4.1.0
 pytest-asyncio>=0.21.0
 ipython>=8.0.0
 
+# === Orchestration (Dagster) ===
+dagster>=1.6.0
+dagster-webserver>=1.6.0
+dagster-postgres>=0.22.0
+

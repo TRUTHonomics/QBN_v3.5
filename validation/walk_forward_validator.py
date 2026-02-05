@@ -10,6 +10,7 @@ import json
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import uuid
 import pandas as pd
 import numpy as np
 from decimal import Decimal
@@ -30,15 +31,36 @@ class WalkForwardValidator:
     Engine voor walk-forward validatie van het QBN v2 model.
     """
 
-    def __init__(self, asset_id: int, output_dir: Optional[Path] = None, backtest_config: Optional[BacktestConfig] = None, backtest_id: Optional[str] = None):
+    def __init__(
+        self,
+        asset_id: int,
+        output_dir: Optional[Path] = None,
+        backtest_config: Optional[BacktestConfig] = None,
+        backtest_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        persist_predictions: bool = True,
+    ):
         self.asset_id = asset_id
         self.output_dir = output_dir or Path("_validation")
-        self.backtest_id = backtest_id  # REASON: Gebruik de door TSEM geregistreerde ID
+        # REASON: Gebruik de door TSEM geregistreerde backtest_id. Als hij ontbreekt
+        # genereren we hier één keer zodat zowel trades als walk-forward predictions
+        # consistent dezelfde sessie-id gebruiken.
+        self.backtest_id = backtest_id or f"bt_{asset_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
         self.loader = InferenceLoader()
+
+        # Walk-forward predictions persistence (retrospectief, niet-live)
+        self.persist_predictions = persist_predictions
+        self.run_id = run_id or self._resolve_latest_complete_run_id()
+        if self.persist_predictions and not self._db_table_exists("qbn", "walkforward_predictions"):
+            logger.warning("⚠️ qbn.walkforward_predictions bestaat niet. Predictions worden niet gepersisteerd.")
+            self.persist_predictions = False
+        if self.persist_predictions and not self.run_id:
+            logger.warning("⚠️ Geen complete run_id kunnen resolven. Predictions worden niet gepersisteerd.")
+            self.persist_predictions = False
         
         # REASON: Gebruik InferenceLoader.load_inference_engine om CPTs, 
         # classificatie EN ThresholdLoader in één keer correct te laden.
-        self.engine_cpu = self.loader.load_inference_engine(asset_id, horizon='1h')
+        self.engine_cpu = self.loader.load_inference_engine(asset_id, horizon='1h', run_id=self.run_id or None)
         
         # Initialiseer de GPU engine voor batch verwerking
         # REASON: Gebruik dezelfde CPTs, classificatie EN threshold_loader als de CPU engine
@@ -59,6 +81,184 @@ class WalkForwardValidator:
         # Backtest mode
         self.backtest_config = backtest_config
         self.trade_simulator = TradeSimulator(backtest_config) if backtest_config else None
+
+    def _db_table_exists(self, schema: str, table: str) -> bool:
+        """Runtime-safe check of een tabel bestaat."""
+        try:
+            with get_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_schema = %s
+                      AND table_name = %s
+                    LIMIT 1
+                    """,
+                    (schema, table),
+                )
+                return cur.fetchone() is not None
+        except Exception:
+            return False
+
+    def _resolve_latest_complete_run_id(self) -> str:
+        """
+        Selecteer de meest recente COMPLETE training run voor dit asset.
+
+        Definitie (conform validation pipeline):
+        - >=10 CPT nodes in qbn.cpt_cache voor scope_key=asset_{id}
+        - >=1 threshold entry in qbn.composite_threshold_config
+        """
+        try:
+            with get_cursor() as cur:
+                cur.execute(
+                    """
+                    WITH valid_cpt_runs AS (
+                        SELECT
+                            c.run_id,
+                            COUNT(DISTINCT c.node_name) AS cpt_nodes,
+                            MAX(c.generated_at) AS last_cpt_generated_at
+                        FROM qbn.cpt_cache c
+                        WHERE c.scope_key = %s
+                          AND c.run_id IS NOT NULL
+                        GROUP BY c.run_id
+                        HAVING COUNT(DISTINCT c.node_name) >= 10
+                    ),
+                    valid_threshold_runs AS (
+                        SELECT
+                            t.run_id,
+                            COUNT(*) AS threshold_entries,
+                            MAX(t.updated_at) AS last_threshold_updated_at
+                        FROM qbn.composite_threshold_config t
+                        WHERE t.asset_id = %s
+                          AND t.run_id IS NOT NULL
+                        GROUP BY t.run_id
+                        HAVING COUNT(*) >= 1
+                    )
+                    SELECT v.run_id
+                    FROM valid_cpt_runs v
+                    JOIN valid_threshold_runs t ON v.run_id = t.run_id
+                    ORDER BY GREATEST(v.last_cpt_generated_at, t.last_threshold_updated_at) DESC
+                    LIMIT 1
+                    """,
+                    (f"asset_{self.asset_id}", self.asset_id),
+                )
+                row = cur.fetchone()
+                return str(row[0]) if row and row[0] else ""
+        except Exception:
+            return ""
+
+    def _to_str(self, v) -> Optional[str]:
+        """Robuust stringify voor enums/np scalars."""
+        if v is None:
+            return None
+        if hasattr(v, "value"):
+            return str(v.value)
+        return str(self._normalize_value(v))
+
+    def _barrier_pred_json(self, predicted_state: Optional[str], dist: Optional[dict]) -> Optional[dict]:
+        """
+        Maak een minimale barrier_prediction JSONB compatible structuur.
+        Verwacht: expected_direction in {up,down,neutral}.
+        """
+        if not predicted_state:
+            return None
+        st = str(predicted_state).lower()
+        if st.startswith("up"):
+            direction = "up"
+        elif st.startswith("down"):
+            direction = "down"
+        else:
+            direction = "neutral"
+        out = {"expected_state": predicted_state, "expected_direction": direction}
+        if dist is not None:
+            out["distribution"] = dist
+        return out
+
+    def _save_window_predictions_to_db(
+        self,
+        step_predictions: List[dict],
+        train_window_start: datetime,
+        train_window_end: datetime,
+    ) -> None:
+        """Persist predictions van 1 window naar qbn.walkforward_predictions."""
+        if not self.persist_predictions:
+            return
+        if not step_predictions:
+            return
+
+        rows = []
+        for p in step_predictions:
+            t = p.get("time")
+            pred_1h = self._to_str(p.get("prediction_1h"))
+            pred_4h = self._to_str(p.get("prediction_4h"))
+            pred_1d = self._to_str(p.get("prediction_1d"))
+
+            dist_1h = self._normalize_value(p.get("dist_1h"))
+            dist_4h = self._normalize_value(p.get("dist_4h"))
+            dist_1d = self._normalize_value(p.get("dist_1d"))
+
+            barrier_1h = self._barrier_pred_json(pred_1h, dist_1h if isinstance(dist_1h, dict) else None)
+            barrier_4h = self._barrier_pred_json(pred_4h, dist_4h if isinstance(dist_4h, dict) else None)
+            barrier_1d = self._barrier_pred_json(pred_1d, dist_1d if isinstance(dist_1d, dict) else None)
+
+            rows.append(
+                (
+                    t,
+                    int(self.asset_id),
+                    str(self.run_id),
+                    self._to_str(p.get("trade_hypothesis")),
+                    None,  # entry_confidence (niet beschikbaar in huidige batch output)
+                    self._to_str(p.get("leading_composite")),
+                    self._to_str(p.get("coincident_composite")),
+                    self._to_str(p.get("confirming_composite")),
+                    pred_1h,
+                    pred_4h,
+                    pred_1d,
+                    json.dumps(dist_1h, default=str) if dist_1h is not None else None,
+                    json.dumps(dist_4h, default=str) if dist_4h is not None else None,
+                    json.dumps(dist_1d, default=str) if dist_1d is not None else None,
+                    json.dumps(barrier_1h, default=str) if barrier_1h is not None else None,
+                    json.dumps(barrier_4h, default=str) if barrier_4h is not None else None,
+                    json.dumps(barrier_1d, default=str) if barrier_1d is not None else None,
+                    train_window_start,
+                    train_window_end,
+                    str(self.backtest_id),
+                )
+            )
+
+        with get_cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO qbn.walkforward_predictions (
+                    time,
+                    asset_id,
+                    run_id,
+                    trade_hypothesis,
+                    entry_confidence,
+                    leading_composite,
+                    coincident_composite,
+                    confirming_composite,
+                    prediction_1h,
+                    prediction_4h,
+                    prediction_1d,
+                    distribution_1h,
+                    distribution_4h,
+                    distribution_1d,
+                    barrier_prediction_1h,
+                    barrier_prediction_4h,
+                    barrier_prediction_1d,
+                    train_window_start,
+                    train_window_end,
+                    backtest_run_id
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s::jsonb, %s::jsonb, %s::jsonb,
+                    %s::jsonb, %s::jsonb, %s::jsonb,
+                    %s, %s, %s
+                )
+                """,
+                rows,
+            )
 
     def _get_earliest_data_timestamp(self) -> Optional[datetime]:
         """Haal het vroegste timestamp op voor dit asset uit de database."""
@@ -167,6 +367,13 @@ class WalkForwardValidator:
                 # Backtest mode: simuleer trades
                 if self.trade_simulator:
                     self._process_backtest_tick(idx, all_data, batch_results)
+
+            # Persist window predictions (retrospectief) indien geconfigureerd
+            self._save_window_predictions_to_db(
+                step_predictions,
+                train_window_start=current_train_start,
+                train_window_end=train_end,
+            )
             
             # 3. Bereken stap-metrieken
             step_metrics = self._calculate_metrics(step_predictions)

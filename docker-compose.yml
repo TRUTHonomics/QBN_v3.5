@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: qbn:latest
-    container_name: QBN_v3.5_Inference
+    container_name: QBN_v4_Inference
     restart: unless-stopped
     
     # REASON: IPC host mode voor CUDA multiprocessing support
@@ -20,6 +20,8 @@ services:
     # GPU ondersteuning
     runtime: nvidia
     environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       # REASON: Voorkom CUDA multiprocessing errors in Docker
@@ -77,7 +79,7 @@ services:
   # REASON: Alle model training en data preparatie taken
   qbn-training:
     image: qbn:latest  # Hergebruikt dezelfde image
-    container_name: QBN_v3.5_Training
+    container_name: QBN_v4_Training
     restart: "no"  # Draait alleen on-demand
     
     ipc: host
@@ -88,6 +90,8 @@ services:
     
     runtime: nvidia
     environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - CUDA_LAUNCH_BLOCKING=0
@@ -127,7 +131,7 @@ services:
   # REASON: Model validatie en quality assurance
   qbn-validation:
     image: qbn:latest  # Hergebruikt dezelfde image
-    container_name: QBN_v3.5_Validation
+    container_name: QBN_v4_Validation
     restart: "no"  # Draait alleen on-demand
     
     ipc: host
@@ -138,6 +142,8 @@ services:
     
     runtime: nvidia
     environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - CUDA_LAUNCH_BLOCKING=0
@@ -172,6 +178,70 @@ services:
     tty: true
     # Standaard commando opent interactive menu
     command: /bin/bash
+
+  # 4. Dagster Webserver (UI + Asset Graph)
+  # REASON: Orkestratie-dashboard voor training/inference/validation (Fase 1: dummy assets)
+  dagster-webserver:
+    image: qbn:latest
+    container_name: QBN_v4_Dagster_Webserver
+    restart: unless-stopped
+
+    env_file:
+      - .env.local
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - DAGSTER_HOME=/app/dagster_home
+      # REASON: Dagster container mag geen inference loop starten
+      - START_INFERENCE_LOOP=false
+      - QBN_ROLE=dagster
+
+    volumes:
+      - .:/app
+      - ../KFL_backend_GPU_v6:/app_kfl:ro
+
+    networks:
+      - qbn-network
+
+    extra_hosts:
+      - "postgres-server:10.10.10.3"
+
+    ports:
+      - "3005:3000"
+
+    command: dagster-webserver -h 0.0.0.0 -p 3000 -w /app/dagster_home/workspace.yaml
+
+  # 5. Dagster Daemon (schedules/sensors)
+  dagster-daemon:
+    image: qbn:latest
+    container_name: QBN_v4_Dagster_Daemon
+    restart: unless-stopped
+
+    env_file:
+      - .env.local
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - DAGSTER_HOME=/app/dagster_home
+      - START_INFERENCE_LOOP=false
+      - QBN_ROLE=dagster
+
+    volumes:
+      - .:/app
+      - ../KFL_backend_GPU_v6:/app_kfl:ro
+      # REASON: Dagster daemon heeft docker socket nodig voor docker exec naar training container
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    networks:
+      - qbn-network
+
+    extra_hosts:
+      - "postgres-server:10.10.10.3"
+
+    depends_on:
+      - dagster-webserver
+
+    command: dagster-daemon run -w /app/dagster_home/workspace.yaml
 
 networks:
   qbn-network:

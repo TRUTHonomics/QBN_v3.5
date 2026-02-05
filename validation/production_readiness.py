@@ -93,6 +93,49 @@ class ProductionReadinessValidator:
         prefix = f"{alias}." if alias else ""
         return f" AND {prefix}run_id = %s", [self.run_id]
 
+    def _check_run_id_exists_in_table(self, table: str) -> bool:
+        """
+        Defensieve check: bestaat de opgegeven run_id in de gegeven tabel?
+
+        REASON: Als een run_id niet in een tabel voorkomt, zullen queries 0 rijen
+        opleveren, wat misleidende N/A of FAIL resultaten geeft. Dit helpt bij
+        troubleshooting van configuratie mismatches.
+        """
+        if not self.run_id:
+            return True  # Geen run_id filter -> altijd OK
+        try:
+            with get_cursor() as cur:
+                # Check of kolom run_id bestaat
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema='qbn'
+                      AND table_name=%s
+                      AND column_name='run_id'
+                    LIMIT 1
+                    """,
+                    (table,),
+                )
+                if not cur.fetchone():
+                    return True  # Geen run_id kolom -> filter niet actief
+                # Check of run_id bestaat in tabel
+                cur.execute(
+                    f"SELECT 1 FROM qbn.{table} WHERE run_id = %s LIMIT 1",
+                    (self.run_id,),
+                )
+                exists = cur.fetchone() is not None
+                if not exists:
+                    logger.warning(
+                        f"⚠️ run_id '{self.run_id}' niet gevonden in qbn.{table}. "
+                        f"Dit kan leiden tot 0-rij resultaten (N/A/FAIL). "
+                        f"Controleer of training consistent dezelfde run_id heeft."
+                    )
+                return exists
+        except Exception as e:
+            logger.debug(f"_check_run_id_exists_in_table({table}): {e}")
+            return True  # Bij fout niet blokkeren
+
     @property
     def asset_symbol(self) -> str:
         """Get asset symbol for display."""
@@ -130,6 +173,9 @@ class ProductionReadinessValidator:
             ('4h', 4),
             ('1d', 24),
         ]
+
+        # Defensive check: run_id moet bestaan in barrier_outcomes
+        self._check_run_id_exists_in_table("barrier_outcomes")
 
         try:
             for horizon, hours in horizon_config:
@@ -241,6 +287,9 @@ class ProductionReadinessValidator:
         Warn: 3-8 entries
         Fail: <3 entries
         """
+        # Defensive check: run_id moet bestaan in composite_threshold_config
+        self._check_run_id_exists_in_table("composite_threshold_config")
+
         try:
             with get_cursor() as cur:
                 run_clause, run_params = self._run_id_clause("composite_threshold_config")
@@ -412,6 +461,9 @@ class ProductionReadinessValidator:
         Check if CPTs are available via cascade lookup.
         Uses the CPTCacheManager for proper scope resolution.
         """
+        # Defensive check: run_id moet bestaan in cpt_cache
+        self._check_run_id_exists_in_table("cpt_cache")
+
         try:
             from inference.cpt_cache_manager import CPTCacheManager
 
@@ -827,6 +879,57 @@ class ProductionReadinessValidator:
                 threshold='<50ms'
             )
 
+    def check_entry_position_correlation(self) -> CheckResult:
+        """
+        Verify that entry quality correlates with position success (backtest data).
+
+        Pass: backtest data present and win rate >= 40%
+        Warn: no backtest data or win rate 30-40%
+        Fail: win rate < 30% with sufficient trades
+        """
+        try:
+            from validation.entry_position_correlation import analyze_entry_position_correlation
+            result = analyze_entry_position_correlation(self.asset_id)
+            by_dir = result.get("by_direction", {})
+            if not by_dir:
+                return CheckResult(
+                    name="Entry-Position Correlation",
+                    status="WARN",
+                    value="N/A",
+                    message="No backtest trades. Run Walk-Forward Backtest (stap 13) first.",
+                )
+            total_wins = sum(s["wins"] for s in by_dir.values())
+            total_losses = sum(s["losses"] for s in by_dir.values())
+            total = total_wins + total_losses
+            win_rate = (total_wins / total * 100) if total else 0
+            if total < 5:
+                return CheckResult(
+                    name="Entry-Position Correlation",
+                    status="WARN",
+                    value=f"{win_rate:.1f}% win rate ({total} trades)",
+                    message="Few trades. Run longer backtest for reliable correlation.",
+                )
+            if win_rate >= 40:
+                status = "PASS"
+            elif win_rate >= 30:
+                status = "WARN"
+            else:
+                status = "FAIL"
+            return CheckResult(
+                name="Entry-Position Correlation",
+                status=status,
+                value=f"{win_rate:.1f}% win rate",
+                message=f"Backtest: {total_wins} wins, {total_losses} losses",
+                threshold=">=40%",
+            )
+        except Exception as e:
+            return CheckResult(
+                name="Entry-Position Correlation",
+                status="WARN",
+                value="ERROR",
+                message=str(e),
+            )
+
     # =========================================================================
     # MAIN ENTRY POINT
     # =========================================================================
@@ -858,6 +961,9 @@ class ProductionReadinessValidator:
         # Inference Simulation
         self.results.append(self.check_key_matching())
         self.results.append(self.check_inference_latency())
+
+        # Entry-Position Correlation (backtest data)
+        self.results.append(self.check_entry_position_correlation())
 
         # Determine verdict
         fail_count = sum(1 for r in self.results if r.status == 'FAIL')

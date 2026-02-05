@@ -334,7 +334,9 @@ class GPUCombinationDataLoader:
             'time_1', 'concordance_score_d', 
             'concordance_score_240', 'concordance_score_60'
         ])
-        
+        # REASON: Normaliseer time_1 naar datetime64[ns, UTC] zodat merge en downstream
+        # geen "Invalid value ... for dtype 'datetime64[ns]'" geven (DB/driver kan [us] leveren).
+        df['time_1'] = pd.to_datetime(df['time_1'], utc=True, errors='coerce')
         return df
     
     def _fetch_outcomes(
@@ -368,7 +370,8 @@ class GPUCombinationDataLoader:
             return pd.DataFrame(columns=['time_1', 'outcome_1h', 'outcome_4h', 'outcome_1d', 'uniqueness_weight'])
         
         df = pd.DataFrame(rows, columns=['time_1', 'first_significant_barrier', 'first_significant_time_min'])
-        df['time_1'] = pd.to_datetime(df['time_1'])
+        # REASON: Zelfde normalisatie als MTF fetches: datetime64[ns, UTC] voor consistente merge.
+        df['time_1'] = pd.to_datetime(df['time_1'], utc=True, errors='coerce')
         
         # 1. Bepaal binary outcomes voor de drie horizons
         for horizon in ['1h', '4h', '1d']:
@@ -385,7 +388,18 @@ class GPUCombinationDataLoader:
 
         # 2. Bereken Uniqueness gewicht (1/N)
         # N = aantal signalen die dezelfde fysieke barrier hit claimen
-        df['hit_timestamp'] = df['time_1'] + pd.to_timedelta(df['first_significant_time_min'], unit='m')
+        # REASON: first_significant_time_min kan NaN zijn (bijv. barrier 'none'),
+        # wat RuntimeWarning kan geven in pandas bij to_timedelta cast.
+        # REASON: Initialiseer als datetime64[ns, UTC] om dtype mismatch met time_1 te voorkomen (Pandas 2.x).
+        df['hit_timestamp'] = pd.Series(pd.NaT, index=df.index, dtype='datetime64[ns, UTC]')
+        mask_valid_time = df['time_1'].notna()
+        mask_valid_min = df['first_significant_time_min'].notna()
+        mask_valid = mask_valid_time & mask_valid_min
+        if mask_valid.any():
+            df.loc[mask_valid, 'hit_timestamp'] = (
+                df.loc[mask_valid, 'time_1']
+                + pd.to_timedelta(df.loc[mask_valid, 'first_significant_time_min'], unit='m')
+            )
         
         mask_hit = (df['first_significant_barrier'] != 'none') & (df['first_significant_barrier'].notna())
         df['uniqueness_weight'] = 1.0
@@ -419,11 +433,12 @@ class GPUCombinationDataLoader:
         """
         xp = self.xp
         
-        # Convert timestamps to int64 for comparison
-        times_lead = df_lead['time_1'].astype('int64').values
-        times_coin = df_coin['time_1'].astype('int64').values
-        times_conf = df_conf['time_1'].astype('int64').values
-        times_out = df_outcomes['time_1'].astype('int64').values
+        # REASON: Convert timestamps to int64 for comparison.
+        # .to_numpy().view('int64') werkt voor zowel DatetimeArray als numpy.ndarray.
+        times_lead = df_lead['time_1'].to_numpy().view('int64')
+        times_coin = df_coin['time_1'].to_numpy().view('int64')
+        times_conf = df_conf['time_1'].to_numpy().view('int64')
+        times_out = df_outcomes['time_1'].to_numpy().view('int64')
         
         if self.use_gpu:
             result = self._merge_gpu(

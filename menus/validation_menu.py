@@ -56,7 +56,48 @@ def _resolve_latest_run_id(asset_id: int) -> str:
     """
     from database.db import get_cursor
 
-    # 1) Prefer CPT cache (meest direct gekoppeld aan training output)
+    # 1) Prefer: meest recente COMPLETE run (CPTs + threshold config)
+    # REASON: Incomplete/partiële runs (bijv. 1 CPT row) breken downstream checks
+    # (Outcome Coverage N/A, Threshold Config 0 entries, Semantic scores leeg, etc.).
+    if _db_has_column("qbn", "cpt_cache", "run_id") and _db_has_column("qbn", "composite_threshold_config", "run_id"):
+        with get_cursor() as cur:
+            cur.execute(
+                """
+                WITH valid_cpt_runs AS (
+                    SELECT
+                        c.run_id,
+                        COUNT(DISTINCT c.node_name) AS cpt_nodes,
+                        MAX(c.generated_at) AS last_cpt_generated_at
+                    FROM qbn.cpt_cache c
+                    WHERE c.scope_key = %s
+                      AND c.run_id IS NOT NULL
+                    GROUP BY c.run_id
+                    HAVING COUNT(DISTINCT c.node_name) >= 10
+                ),
+                valid_threshold_runs AS (
+                    SELECT
+                        t.run_id,
+                        COUNT(*) AS threshold_entries,
+                        MAX(t.updated_at) AS last_threshold_updated_at
+                    FROM qbn.composite_threshold_config t
+                    WHERE t.asset_id = %s
+                      AND t.run_id IS NOT NULL
+                    GROUP BY t.run_id
+                    HAVING COUNT(*) >= 1
+                )
+                SELECT v.run_id
+                FROM valid_cpt_runs v
+                JOIN valid_threshold_runs t ON v.run_id = t.run_id
+                ORDER BY GREATEST(v.last_cpt_generated_at, t.last_threshold_updated_at) DESC
+                LIMIT 1
+                """,
+                (f"asset_{asset_id}", asset_id),
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                return str(row[0])
+
+    # 2) Fallback: newest CPT cache run_id (legacy gedrag)
     if _db_has_column("qbn", "cpt_cache", "run_id"):
         with get_cursor() as cur:
             cur.execute(
@@ -64,6 +105,7 @@ def _resolve_latest_run_id(asset_id: int) -> str:
                 SELECT run_id
                 FROM qbn.cpt_cache
                 WHERE scope_key = %s
+                  AND run_id IS NOT NULL
                 ORDER BY generated_at DESC
                 LIMIT 1
                 """,
@@ -73,7 +115,7 @@ def _resolve_latest_run_id(asset_id: int) -> str:
             if row and row[0]:
                 return str(row[0])
 
-    # 2) Fallback: barrier_outcomes run_id
+    # 3) Fallback: barrier_outcomes run_id
     if _db_has_column("qbn", "barrier_outcomes", "run_id"):
         with get_cursor() as cur:
             cur.execute(
@@ -91,7 +133,7 @@ def _resolve_latest_run_id(asset_id: int) -> str:
             if row and row[0]:
                 return str(row[0])
 
-    # 3) Last resort: thresholds run_id-less; return empty sentinel
+    # 4) Last resort: return empty sentinel
     return ""
 
 
@@ -151,43 +193,45 @@ def save_markdown_report(report_dir: Path, filename_prefix: str, title: str, con
 
 
 def show_menu():
-    """Toon validation menu - Herordend naar chronologische validatie flow"""
+    """Toon validation menu - Herordend naar chronologische validatie flow, nummering 1-23."""
     print("--- Categorie 1: Data Fundament (Fase 1) ---")
-    print("  1.  📊 Database Statistieken (IN: db / OUT: console)")
-    print("  2.  📋 Barrier Outcome Status & Distribution (IN: qbn.barrier_outcomes / OUT: reports)")
-    print("  3.  🛡️  Barrier Outcome Coverage (IN: qbn.barrier_outcomes / OUT: console)")
-    print("  4.  ⚡ Barrier Performance Benchmarks (IN: kfl.klines_raw / OUT: reports)")
+    print("  1.  Database Statistieken (kfl/qbn)")
+    print("  2.  Barrier Outcomes - Status en Distributie (entry target)")
+    print("  3.  Barrier Outcomes - Coverage (entry target)")
+    print("  4.  Barrier Performance Benchmarks (CPU/GPU)")
     print()
-    print("--- Categorie 2: Signal & Weight Validation (Fase 2) ---")
-    print("  5.  ✅ Signal Classification Check (IN: qbn.signal_classification / OUT: console)")
-    print("  6.  🔍 Validate IDA Weights (Dry-Run) (IN: qbn.barrier_outcomes / OUT: reports)")
-    print("  7.  🔗 Concordance Analysis (IN: kfl.mtf_signals_* / OUT: console)")
+    print("--- Categorie 2: Signal en Weight Validation (Fase 2) ---")
+    print("  5.  Signal Classification Check (evidence nodes)")
+    print("  6.  IDA Weights Validation - Dry-Run (barrier outcomes)")
+    print("  7.  Concordance Analysis (MTF signals / evidence)")
     print()
     print("--- Categorie 3: BN Brain Health (Fase 3) ---")
-    print("  8.  💾 CPT Cache Status (IN: qbn.cpt_cache / OUT: console)")
-    print("  9.  🛡️  CPT Health Report (Entropy/Coverage) (IN: qbn.cpt_cache / OUT: console)")
-    print("  10. 🧪 CPT Stability Validation (IN: qbn.cpt_cache / OUT: console)")
-    print("  11. 📊 Semantic Score Analysis (IN: qbn.cpt_cache / OUT: console)")
+    print("  8.  CPT Cache Status (alle BN-nodes)")
+    print("  9.  CPT Health Report (entropy/coverage per node)")
+    print("  10. CPT Stability Validation (lookback)")
+    print("  11. CPT Semantic Score Analysis (per node)")
     print()
     print("--- Categorie 4: Diepe Diagnostiek (Fase 4) ---")
-    print("  12. 🔬 Node-Level Diagnostics (IN: all / OUT: reports)")
+    print("  12. Node-Level Diagnostics (entry + position nodes)")
     print()
-    print("--- Categorie 5: Performance & Readiness (Fase 5) ---")
-    print("  13. 📊 Prediction Accuracy Report (IN: qbn.output_entry, qbn.barrier_outcomes / OUT: console)")
-    print("  14. 🎯 Position Prediction Accuracy (IN: qbn.output_position, qbn.barrier_outcomes / OUT: console)")
-    print("  15. 🚶 Walk-Forward Validation (IN: qbn.signal_outcomes / OUT: console)")
-    print("  16. 📈 Backtest Simulation (IN: kfl.klines_raw / OUT: reports)")
-    print("  17. 🏁 Production Readiness Check (GO/NO-GO) (IN: all / OUT: reports)")
+    print("--- Categorie 5: Performance en Readiness (Fase 5) ---")
+    print("  13. Walk-Forward Backtest (entry + position, P&L)")
+    print("  14. Entry Prediction Accuracy (output_entry vs barrier outcomes)")
+    print("  15. Position Prediction Accuracy (Position_Confidence/Prediction CPT)")
+    print("  16. Position Sizing Validation (backtest_trades quantity)")
+    print("  17. Walk-Forward Signal Validation (signal_outcomes)")
+    print("  18. Entry-Position Correlation (backtest win rate / outcomes)")
+    print("  19. Production Readiness Check (GO/NO-GO, incl. correlation)")
     print()
     print("--- Categorie 6: Strategie Optimalisatie ---")
-    print("  18. 🔍 Grid Search Configurator (Parameter Optimization)")
+    print("  20. Grid Search Configurator (Parameter Optimization)")
     print()
-    print("--- Categorie 7: Rapportage & Automatisering ---")
-    print("  19. 📄 Generate Validation Report (MD) (IN: db / OUT: md)")
-    print("  20. 📦 Archiveer Rapporten (IN: reports / OUT: zip)")
-    print("  21. 🚀 VOLLEDIGE VALIDATIE CYCLE (Auto-Run)")
+    print("--- Categorie 7: Rapportage en Automatisering ---")
+    print("  21. Generate Validation Report (MD)")
+    print("  22. Archiveer Rapporten")
+    print("  23. VOLLEDIGE VALIDATIE CYCLE (Auto-Run)")
     print()
-    print("  99. 🔄 Refresh status")
+    print("  99. Refresh status")
     print("  0.  Exit")
     print()
     return input("Keuze: ").strip()
@@ -666,8 +710,28 @@ def run_node_level_diagnostics(auto=False):
 # ==============================================================================
 # Performance & Readiness (Fase 5)
 # ==============================================================================
+def _has_walkforward_predictions(asset_id: int) -> int:
+    """
+    Controleer of er walk-forward predictions bestaan voor dit asset.
+    Returns het aantal rijen, of 0 als tabel niet bestaat of leeg is.
+    """
+    if not _db_has_column("qbn", "walkforward_predictions", "asset_id"):
+        return 0
+    from database.db import get_cursor
+    try:
+        with get_cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM qbn.walkforward_predictions WHERE asset_id = %s",
+                (asset_id,),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
 def run_prediction_accuracy_report(asset_id=None, auto=False):
-    """Prediction Accuracy Report (v3.1 JSONB aware)"""
+    """Prediction Accuracy Report (v3.5 met walk-forward predictions ondersteuning)"""
     print("\n" + "="*60); print("📊 PREDICTION ACCURACY REPORT"); print("="*60 + "\n")
     try:
         from database.db import get_cursor
@@ -675,22 +739,7 @@ def run_prediction_accuracy_report(asset_id=None, auto=False):
         # REASON: In auto mode, detecteer automatisch welke mode data heeft
         if auto:
             days = "3650"
-            with get_cursor() as cur:
-                # Check welke outcome_mode het meeste data heeft
-                cur.execute("""
-                    SELECT outcome_mode, COUNT(*) as cnt 
-                    FROM qbn.output_entry 
-                    WHERE asset_id = %s OR %s = 0
-                    GROUP BY outcome_mode 
-                    ORDER BY cnt DESC 
-                    LIMIT 1
-                """, (asset_id or 0, asset_id or 0))
-                row = cur.fetchone()
-                if row and row[0]:
-                    outcome_mode = row[0]
-                    print(f"ℹ️ Auto-detected mode: {outcome_mode} ({row[1]} entries)")
-                else:
-                    outcome_mode = "barrier"  # fallback
+            outcome_mode = "barrier"
         elif asset_id is None:
             asset_id = int(input("Asset ID (0 voor alle) [0]: ").strip() or "0")
             days = input("Aantal dagen terug [3650]: ").strip() or "3650"
@@ -705,81 +754,118 @@ def run_prediction_accuracy_report(asset_id=None, auto=False):
             days = "3650"
             outcome_mode = "barrier"
 
-        # REASON: Bepaal mode filter voor query
-        if outcome_mode == "all":
-            mode_filter = "1=1"  # Geen filter
-            mode_display = "all modes"
-        elif outcome_mode in ("barrier", "dual"):
-            mode_filter = "(o.outcome_mode = 'barrier' OR o.outcome_mode = 'dual')"
-            mode_display = "barrier/dual"
-        else:
-            mode_filter = "o.outcome_mode = 'point_in_time'"
-            mode_display = "point_in_time"
+        # =====================================================================
+        # STAP 1: Check walk-forward predictions eerst (retrospectief, lookahead-safe)
+        # =====================================================================
+        wf_count = _has_walkforward_predictions(asset_id or 0) if (asset_id and asset_id > 0) else 0
+        use_walkforward = wf_count > 0
 
-        # REASON: Query die zowel JSONB barrier predictions als reguliere predictions ondersteunt
-        # EXPL: Gebruikt COALESCE om beide formats te ondersteunen
-        query = f"""
-            SELECT 
-                o.asset_id, 
-                COUNT(*) as total,
-                COALESCE(
-                    -- Barrier mode: check JSONB predictions tegen barrier_outcomes
-                    CASE WHEN SUM(CASE WHEN o.barrier_prediction_1h IS NOT NULL THEN 1 ELSE 0 END) > 0 THEN
-                        SUM(CASE WHEN (o.barrier_prediction_1h->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
-                                  OR (o.barrier_prediction_1h->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
-                                  OR (o.barrier_prediction_1h->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
-                            / NULLIF(COUNT(*), 0)
-                    ELSE NULL END,
-                    -- Fallback: directional predictions (prediction_1h column)
-                    SUM(CASE WHEN (o.prediction_1h LIKE '%%Bullish' AND s.first_significant_barrier LIKE 'up%%')
-                              OR (o.prediction_1h LIKE '%%Bearish' AND s.first_significant_barrier LIKE 'down%%')
-                              OR (o.prediction_1h = 'Neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
-                        / NULLIF(COUNT(*), 0),
-                    0.0
-                ) as acc_1h,
-                COALESCE(
-                    CASE WHEN SUM(CASE WHEN o.barrier_prediction_4h IS NOT NULL THEN 1 ELSE 0 END) > 0 THEN
-                        SUM(CASE WHEN (o.barrier_prediction_4h->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
-                                  OR (o.barrier_prediction_4h->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
-                                  OR (o.barrier_prediction_4h->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
-                            / NULLIF(COUNT(*), 0)
-                    ELSE NULL END,
-                    SUM(CASE WHEN (o.prediction_4h LIKE '%%Bullish' AND s.first_significant_barrier LIKE 'up%%')
-                              OR (o.prediction_4h LIKE '%%Bearish' AND s.first_significant_barrier LIKE 'down%%')
-                              OR (o.prediction_4h = 'Neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
-                        / NULLIF(COUNT(*), 0),
-                    0.0
-                ) as acc_4h,
-                COALESCE(
-                    CASE WHEN SUM(CASE WHEN o.barrier_prediction_1d IS NOT NULL THEN 1 ELSE 0 END) > 0 THEN
-                        SUM(CASE WHEN (o.barrier_prediction_1d->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
-                                  OR (o.barrier_prediction_1d->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
-                                  OR (o.barrier_prediction_1d->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
-                            / NULLIF(COUNT(*), 0)
-                    ELSE NULL END,
-                    SUM(CASE WHEN (o.prediction_1d LIKE '%%Bullish' AND s.first_significant_barrier LIKE 'up%%')
-                              OR (o.prediction_1d LIKE '%%Bearish' AND s.first_significant_barrier LIKE 'down%%')
-                              OR (o.prediction_1d = 'Neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
-                        / NULLIF(COUNT(*), 0),
-                    0.0
-                ) as acc_1d
-            FROM qbn.output_entry o 
-            JOIN qbn.barrier_outcomes s ON o.asset_id = s.asset_id AND o.time = s.time_1
-            WHERE o.time > NOW() - (%s * INTERVAL '1 day') 
-              AND {mode_filter}
-        """
-        
-        # REASON: Bind accuracy report aan dezelfde training-run indien mogelijk.
-        if CURRENT_RUN_ID and _db_has_column("qbn", "barrier_outcomes", "run_id"):
-            query += " AND s.run_id = %s"
-        
-        if asset_id and asset_id > 0: 
-            query += f" AND o.asset_id = {asset_id}"
-        query += " GROUP BY o.asset_id ORDER BY o.asset_id"
-        
-        params = [int(days)]
-        if CURRENT_RUN_ID and _db_has_column("qbn", "barrier_outcomes", "run_id"):
-            params.append(CURRENT_RUN_ID)
+        if use_walkforward:
+            print(f"ℹ️ Bron: qbn.walkforward_predictions ({wf_count} retrospectieve predictions)")
+            # REASON: Walk-forward predictions zijn lookahead-safe en te prefereren boven live.
+            query = """
+                SELECT 
+                    w.asset_id, 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN (w.barrier_prediction_1h->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
+                              OR (w.barrier_prediction_1h->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
+                              OR (w.barrier_prediction_1h->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                        / NULLIF(COUNT(*), 0) as acc_1h,
+                    SUM(CASE WHEN (w.barrier_prediction_4h->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
+                              OR (w.barrier_prediction_4h->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
+                              OR (w.barrier_prediction_4h->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                        / NULLIF(COUNT(*), 0) as acc_4h,
+                    SUM(CASE WHEN (w.barrier_prediction_1d->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
+                              OR (w.barrier_prediction_1d->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
+                              OR (w.barrier_prediction_1d->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                        / NULLIF(COUNT(*), 0) as acc_1d
+                FROM qbn.walkforward_predictions w
+                JOIN qbn.barrier_outcomes s ON w.asset_id = s.asset_id AND w.time = s.time_1
+                WHERE w.time > NOW() - (%s * INTERVAL '1 day')
+            """
+            params = [int(days)]
+            if asset_id and asset_id > 0:
+                query += " AND w.asset_id = %s"
+                params.append(asset_id)
+            # REASON: Bind aan run_id indien aanwezig
+            if CURRENT_RUN_ID and _db_has_column("qbn", "walkforward_predictions", "run_id"):
+                query += " AND w.run_id = %s"
+                params.append(CURRENT_RUN_ID)
+            query += " GROUP BY w.asset_id ORDER BY w.asset_id"
+            mode_display = "walkforward (retrospective)"
+        else:
+            # =====================================================================
+            # STAP 2: Fallback naar live predictions (qbn.output_entry)
+            # =====================================================================
+            print("ℹ️ Bron: qbn.output_entry (live predictions)")
+            # REASON: Bepaal mode filter voor query
+            if outcome_mode == "all":
+                mode_filter = "1=1"
+                mode_display = "all modes (live)"
+            elif outcome_mode in ("barrier", "dual"):
+                mode_filter = "(o.outcome_mode = 'barrier' OR o.outcome_mode = 'dual')"
+                mode_display = "barrier/dual (live)"
+            else:
+                mode_filter = "o.outcome_mode = 'point_in_time'"
+                mode_display = "point_in_time (live)"
+
+            query = f"""
+                SELECT 
+                    o.asset_id, 
+                    COUNT(*) as total,
+                    COALESCE(
+                        CASE WHEN SUM(CASE WHEN o.barrier_prediction_1h IS NOT NULL THEN 1 ELSE 0 END) > 0 THEN
+                            SUM(CASE WHEN (o.barrier_prediction_1h->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
+                                      OR (o.barrier_prediction_1h->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
+                                      OR (o.barrier_prediction_1h->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                                / NULLIF(COUNT(*), 0)
+                        ELSE NULL END,
+                        SUM(CASE WHEN (o.prediction_1h LIKE '%%Bullish' AND s.first_significant_barrier LIKE 'up%%')
+                                  OR (o.prediction_1h LIKE '%%Bearish' AND s.first_significant_barrier LIKE 'down%%')
+                                  OR (o.prediction_1h = 'Neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                            / NULLIF(COUNT(*), 0),
+                        0.0
+                    ) as acc_1h,
+                    COALESCE(
+                        CASE WHEN SUM(CASE WHEN o.barrier_prediction_4h IS NOT NULL THEN 1 ELSE 0 END) > 0 THEN
+                            SUM(CASE WHEN (o.barrier_prediction_4h->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
+                                      OR (o.barrier_prediction_4h->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
+                                      OR (o.barrier_prediction_4h->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                                / NULLIF(COUNT(*), 0)
+                        ELSE NULL END,
+                        SUM(CASE WHEN (o.prediction_4h LIKE '%%Bullish' AND s.first_significant_barrier LIKE 'up%%')
+                                  OR (o.prediction_4h LIKE '%%Bearish' AND s.first_significant_barrier LIKE 'down%%')
+                                  OR (o.prediction_4h = 'Neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                            / NULLIF(COUNT(*), 0),
+                        0.0
+                    ) as acc_4h,
+                    COALESCE(
+                        CASE WHEN SUM(CASE WHEN o.barrier_prediction_1d IS NOT NULL THEN 1 ELSE 0 END) > 0 THEN
+                            SUM(CASE WHEN (o.barrier_prediction_1d->>'expected_direction' = 'up' AND s.first_significant_barrier LIKE 'up%%') 
+                                      OR (o.barrier_prediction_1d->>'expected_direction' = 'down' AND s.first_significant_barrier LIKE 'down%%') 
+                                      OR (o.barrier_prediction_1d->>'expected_direction' = 'neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                                / NULLIF(COUNT(*), 0)
+                        ELSE NULL END,
+                        SUM(CASE WHEN (o.prediction_1d LIKE '%%Bullish' AND s.first_significant_barrier LIKE 'up%%')
+                                  OR (o.prediction_1d LIKE '%%Bearish' AND s.first_significant_barrier LIKE 'down%%')
+                                  OR (o.prediction_1d = 'Neutral' AND s.first_significant_barrier = 'none') THEN 1 ELSE 0 END)::float 
+                            / NULLIF(COUNT(*), 0),
+                        0.0
+                    ) as acc_1d
+                FROM qbn.output_entry o 
+                JOIN qbn.barrier_outcomes s ON o.asset_id = s.asset_id AND o.time = s.time_1
+                WHERE o.time > NOW() - (%s * INTERVAL '1 day') 
+                  AND {mode_filter}
+            """
+            params = [int(days)]
+            # REASON: Bind accuracy report aan dezelfde training-run indien mogelijk.
+            if CURRENT_RUN_ID and _db_has_column("qbn", "barrier_outcomes", "run_id"):
+                query += " AND s.run_id = %s"
+                params.append(CURRENT_RUN_ID)
+            if asset_id and asset_id > 0: 
+                query += f" AND o.asset_id = {asset_id}"
+            query += " GROUP BY o.asset_id ORDER BY o.asset_id"
+
         with get_cursor() as cur:
             cur.execute(query, tuple(params))
             rows = cur.fetchall()
@@ -797,7 +883,7 @@ def run_prediction_accuracy_report(asset_id=None, auto=False):
                 print(line)
                 report_lines.append(line)
         report_lines.append("```")
-        report_dir = get_report_dir(asset_id or 0, 13, "Prediction Accuracy")
+        report_dir = get_report_dir(asset_id or 0, 14, "Entry Prediction Accuracy")
         prepare_report_dir(report_dir)
         save_markdown_report(report_dir, "accuracy_report", "Prediction Accuracy", report_lines, asset_id=asset_id)
     except Exception as e: 
@@ -823,13 +909,57 @@ def run_position_prediction_accuracy_report(asset_id=None, auto=False):
             aid_in = input("Asset ID [1]: ").strip() or "1"
             asset_id = int(aid_in)
         
-    report_dir = get_report_dir(asset_id, 14, "Position Prediction Accuracy")
+    report_dir = get_report_dir(asset_id, 15, "Position Prediction Accuracy")
     prepare_report_dir(report_dir)
     
     cmd = [sys.executable, 'scripts/validate_position_management.py', '--asset-id', str(asset_id), '--output-dir', str(report_dir)]
     subprocess.run(cmd, cwd=PROJECT_ROOT)
     
     if not auto: input("\nDruk op Enter om terug te gaan...")
+
+
+def run_position_sizing_validation(asset_id=None, auto=False):
+    """Valideer position sizing logica tegen historische backtest trades."""
+    print("\n" + "=" * 60)
+    print("📐 POSITION SIZING VALIDATION")
+    print("=" * 60 + "\n")
+    try:
+        from database.db import get_cursor
+        aid = int(asset_id) if asset_id else int(input("Asset ID [1]: ").strip() or "1")
+        report_dir = get_report_dir(aid, 16, "Position Sizing Validation")
+        prepare_report_dir(report_dir)
+
+        if not _db_has_column("qbn", "backtest_trades", "quantity"):
+            report_lines = ["Geen qbn.backtest_trades tabel met quantity kolom. Run Walk-Forward Backtest (stap 13) eerst."]
+            print(report_lines[0])
+        else:
+            with get_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT backtest_id, COUNT(*) as trades, AVG(quantity) as avg_qty, MIN(quantity), MAX(quantity)
+                    FROM qbn.backtest_trades bt
+                    JOIN qbn.backtest_runs br ON bt.backtest_id = br.backtest_id
+                    WHERE br.asset_id = %s
+                    GROUP BY backtest_id ORDER BY backtest_id DESC LIMIT 10
+                    """,
+                    (aid,),
+                )
+                rows = cur.fetchall()
+            if not rows:
+                report_lines = ["Geen backtest trades gevonden voor dit asset. Run Walk-Forward Backtest (stap 13) eerst."]
+                print(report_lines[0])
+            else:
+                report_lines = ["```text", f"{'Backtest ID':<24} {'Trades':>8} {'Avg Qty':>12} {'Min':>12} {'Max':>12}", "-" * 70]
+                for r in rows:
+                    line = f"{str(r[0]):<24} {r[1]:>8} {float(r[2] or 0):>12.4f} {float(r[3] or 0):>12.4f} {float(r[4] or 0):>12.4f}"
+                    print(line)
+                    report_lines.append(line)
+                report_lines.append("```")
+        save_markdown_report(report_dir, "sizing_validation", "Position Sizing Validation", report_lines, asset_id=aid)
+    except Exception as e:
+        print(f"❌ Fout: {e}")
+    if not auto:
+        input("\nDruk op Enter om terug te gaan...")
 
 
 def run_walk_forward_validation(asset_id=None, auto=False):
@@ -839,7 +969,7 @@ def run_walk_forward_validation(asset_id=None, auto=False):
         aid = asset_id or input("Asset ID [1]: ").strip() or "1"
         days = "3650" if asset_id else input("Dagen [3650]: ").strip() or "3650"
         
-        report_dir = get_report_dir(aid, 15, "Walk-Forward Validation")
+        report_dir = get_report_dir(aid, 17, "Walk-Forward Signal Validation")
         prepare_report_dir(report_dir)
         
         cmd = [sys.executable, 'scripts/run_walk_forward.py', '--asset-id', str(aid), '--days', str(days), '--output-dir', str(report_dir)]
@@ -848,16 +978,84 @@ def run_walk_forward_validation(asset_id=None, auto=False):
     if not auto: input("\nDruk op Enter om terug te gaan...")
 
 
-def run_backtest_simulation(auto=False):
-    """Backtest Simulation"""
-    print("\n" + "="*60); print("📈 BACKTEST SIMULATION"); print("="*60 + "\n")
+def run_entry_position_correlation(asset_id=None, auto=False):
+    """Entry-Position Correlation: meet correlatie entry quality vs position outcome."""
+    print("\n" + "=" * 60)
+    print("🔗 ENTRY-POSITION CORRELATION")
+    print("=" * 60 + "\n")
     try:
-        aid = input("Asset ID [1]: ").strip() or "1"
-        report_dir = get_report_dir(aid, 16, "Backtest Simulation")
+        from validation.entry_position_correlation import analyze_entry_position_correlation
+        aid = int(asset_id) if asset_id else int(input("Asset ID [1]: ").strip() or "1")
+        report_dir = get_report_dir(aid, 18, "Entry-Position Correlation")
         prepare_report_dir(report_dir)
-        print("⚠️ Backtest script nog niet volledig structureel geïntegreerd.")
-    except Exception as e: print(f"❌ Fout: {e}")
-    if not auto: input("\nDruk op Enter om terug te gaan...")
+        result = analyze_entry_position_correlation(asset_id=aid)
+        report_lines = result.get("report_lines", ["Geen backtest trades beschikbaar. Run stap 13 eerst."])
+        for line in report_lines:
+            print(line)
+        save_markdown_report(report_dir, "correlation", "Entry-Position Correlation", report_lines, asset_id=aid)
+    except Exception as e:
+        print(f"❌ Fout: {e}")
+        import traceback
+        traceback.print_exc()
+    if not auto:
+        input("\nDruk op Enter om terug te gaan...")
+
+
+def run_backtest_simulation(asset_id=None, auto=False):
+    """Walk-Forward Backtest met TradeSimulator en P&L metrics."""
+    print("\n" + "=" * 60)
+    print("📈 WALK-FORWARD BACKTEST")
+    print("=" * 60 + "\n")
+    try:
+        from datetime import timezone
+        from validation.backtest_config import BacktestConfig
+        from validation.run_backtest import run_backtest_internal
+        from validation.backtest_report import save_backtest_report
+
+        if asset_id is None:
+            aid = int(input("Asset ID [1]: ").strip() or "1")
+        else:
+            aid = int(asset_id)
+
+        if not auto:
+            start_str = input("Start (YYYY-MM-DD) [2024-01-01]: ").strip() or "2024-01-01"
+            end_str = input("Eind (YYYY-MM-DD) [2025-01-01]: ").strip() or "2025-01-01"
+        else:
+            start_str, end_str = "2024-01-01", "2025-01-01"
+
+        start_dt = datetime.strptime(start_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end_dt = datetime.strptime(end_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+        config = BacktestConfig(
+            asset_id=aid,
+            start_date=start_dt,
+            end_date=end_dt,
+            train_window_days=90,
+            initial_capital_usd=10000.0,
+            leverage=1.0,
+            position_size_pct=2.0,
+            stop_loss_atr_mult=1.0,
+            take_profit_atr_mult=1.5,
+            use_atr_based_exits=True,
+            use_qbn_exit_timing=True,
+            entry_strength_threshold="weak",
+        )
+
+        report_dir = get_report_dir(aid, 13, "Walk-Forward Backtest")
+        prepare_report_dir(report_dir)
+
+        print(f"🔄 Backtest uitvoeren: asset {aid}, {start_str} t/m {end_str}...")
+        metrics, trades = run_backtest_internal(config)
+        save_backtest_report(report_dir, metrics, trades, asset_id=aid)
+
+        print(f"\n✅ Backtest voltooid: {metrics.get('total_trades', 0)} trades, "
+              f"PnL ${metrics.get('total_pnl_usd', 0):.2f} ({metrics.get('total_pnl_pct', 0):.2f}%)")
+    except Exception as e:
+        print(f"❌ Fout: {e}")
+        import traceback
+        traceback.print_exc()
+    if not auto:
+        input("\nDruk op Enter om terug te gaan...")
 
 
 def run_production_readiness_check(asset_id=None, auto=False):
@@ -868,7 +1066,7 @@ def run_production_readiness_check(asset_id=None, auto=False):
         from validation.readiness_report import ReadinessReportGenerator, print_console_results
         aid = int(asset_id) if asset_id else int(input("Asset ID [1]: ").strip() or "1")
         
-        report_dir = get_report_dir(aid, 17, "Production Readiness")
+        report_dir = get_report_dir(aid, 19, "Production Readiness")
         prepare_report_dir(report_dir)
         
         validator = ProductionReadinessValidator(aid, run_id=CURRENT_RUN_ID or None)
@@ -942,8 +1140,8 @@ def generate_validation_report_logic():
 def run_full_validation_cycle():
     """
     Voert alle validatietesten sequentieel uit voor een geselecteerd asset.
-    
-    REASON: Alle 17 menu-stappen worden doorlopen in chronologische volgorde.
+
+    REASON: Alle 19 menu-stappen (1-19) worden doorlopen in chronologische volgorde.
     Zware/optionele stappen (benchmarks, backtest) kunnen worden overgeslagen.
     """
     print("\n" + "="*60); print("🚀 START VOLLEDIGE VALIDATIE CYCLE"); print("="*60 + "\n")
@@ -963,36 +1161,34 @@ def run_full_validation_cycle():
     
     # REASON: Optionele heavy steps kunnen overgeslagen worden
     skip_benchmarks = input("Skip Barrier Benchmarks? (y/N): ").strip().lower() == 'y'
-    skip_backtest = True  # Backtest is nog niet volledig geïntegreerd
+    skip_backtest = False
 
-    # REASON: Volledige steps lijst conform menu-nummering (1-17)
+    # REASON: Volledige steps lijst conform menu-nummering (1-19)
     steps = [
         # Fase 1: Data Fundament
-        ("1. Database Statistieken", run_database_stats, [aid], False),
-        ("2. Barrier Outcome Status", run_barrier_validation, [aid], False),
-        ("3. Barrier Coverage", run_barrier_coverage_status, [aid], False),
-        ("4. Barrier Benchmarks", run_barrier_benchmarks, [], skip_benchmarks),
-        
-        # Fase 2: Signal & Weight Validation
-        ("5. Signal Classification", run_signal_classification_check, [aid], False),
-        ("6. IDA Weight Validation", run_ida_validation, [aid], False),
+        ("1. Database Statistieken (kfl/qbn)", run_database_stats, [aid], False),
+        ("2. Barrier Outcomes - Status en Distributie", run_barrier_validation, [aid], False),
+        ("3. Barrier Outcomes - Coverage", run_barrier_coverage_status, [aid], False),
+        ("4. Barrier Performance Benchmarks", run_barrier_benchmarks, [], skip_benchmarks),
+        # Fase 2: Signal en Weight Validation
+        ("5. Signal Classification Check", run_signal_classification_check, [aid], False),
+        ("6. IDA Weights Validation - Dry-Run", run_ida_validation, [aid], False),
         ("7. Concordance Analysis", run_concordance_analysis, [aid], False),
-        
         # Fase 3: BN Brain Health
         ("8. CPT Cache Status", run_cpt_cache_status, [aid], False),
         ("9. CPT Health Report", run_cpt_health_report, [aid], False),
-        ("10. CPT Stability", run_cpt_stability_validation, [aid], False),
-        ("11. Semantic Score", run_semantic_score_analysis, [aid], False),
-        
+        ("10. CPT Stability Validation", run_cpt_stability_validation, [aid], False),
+        ("11. CPT Semantic Score Analysis", run_semantic_score_analysis, [aid], False),
         # Fase 4: Diepe Diagnostiek
         ("12. Node-Level Diagnostics", run_node_level_diagnostics_logic, [aid], False),
-        
-        # Fase 5: Performance & Readiness
-        ("13. Prediction Accuracy", run_prediction_accuracy_report, [aid], False),
-        ("14. Position Prediction Accuracy", run_position_prediction_accuracy_report, [aid], False),
-        ("15. Walk-Forward Validation", run_walk_forward_validation, [aid], False),
-        ("16. Backtest Simulation", run_backtest_simulation, [], skip_backtest),
-        ("17. Production Readiness", run_production_readiness_check, [aid], False),
+        # Fase 5: Performance en Readiness
+        ("13. Walk-Forward Backtest", run_backtest_simulation, [aid], skip_backtest),
+        ("14. Entry Prediction Accuracy", run_prediction_accuracy_report, [aid], False),
+        ("15. Position Prediction Accuracy", run_position_prediction_accuracy_report, [aid], False),
+        ("16. Position Sizing Validation", run_position_sizing_validation, [aid], False),
+        ("17. Walk-Forward Signal Validation", run_walk_forward_validation, [aid], False),
+        ("18. Entry-Position Correlation", run_entry_position_correlation, [aid], False),
+        ("19. Production Readiness Check", run_production_readiness_check, [aid], False),
     ]
 
     issues = []
@@ -1016,7 +1212,7 @@ def run_full_validation_cycle():
             elif func == run_barrier_benchmarks:
                 func(auto=True)
             elif func == run_backtest_simulation:
-                func(auto=True)
+                func(*args, auto=True)
             else:
                 func(*args, auto=True)
             
@@ -1081,16 +1277,18 @@ def handle_choice(choice: str):
         '9': run_cpt_health_report,
         '10': run_cpt_stability_validation, 
         '11': run_semantic_score_analysis,
-        '12': run_node_level_diagnostics, 
-        '13': run_prediction_accuracy_report,
-        '14': run_position_prediction_accuracy_report, 
-        '15': run_walk_forward_validation,
-        '16': run_backtest_simulation, 
-        '17': run_production_readiness_check,
-        '18': run_grid_search_configurator,
-        '19': generate_validation_report_logic, 
-        '20': run_archive_reports, 
-        '21': run_full_validation_cycle,
+        '12': run_node_level_diagnostics,
+        '13': run_backtest_simulation,
+        '14': run_prediction_accuracy_report,
+        '15': run_position_prediction_accuracy_report,
+        '16': run_position_sizing_validation,
+        '17': run_walk_forward_validation,
+        '18': run_entry_position_correlation,
+        '19': run_production_readiness_check,
+        '20': run_grid_search_configurator,
+        '21': generate_validation_report_logic,
+        '22': run_archive_reports,
+        '23': run_full_validation_cycle,
     }
     
     if choice in handlers:
