@@ -32,6 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from database.db import get_cursor
 from config.ida_config import IDAConfig, STATIONARITY_DEFAULTS
 from core.logging_utils import setup_logging
+from core.step_validation import validate_step_input, log_handshake_out, StepValidationError
 
 logger = setup_logging("compute_barrier_weights")
 
@@ -339,6 +340,16 @@ class IDAWeightCalculator:
                 updated += len(batch)
         
         logger.info(f"Updated {updated:,} rows in database")
+        
+        # HANDSHAKE_OUT logging
+        log_handshake_out(
+            step="compute_barrier_weights",
+            target="qbn.barrier_outcomes",
+            run_id=self.run_id or "N/A",
+            rows=updated,
+            operation="UPDATE"
+        )
+        
         return updated
     
     def run(self, dry_run: bool = False) -> Dict:
@@ -445,6 +456,25 @@ def main():
     parser.add_argument('--run-id', type=str, help='Run identifier for traceability')
     
     args = parser.parse_args()
+    
+    # Validation guard: check upstream barrier_outcomes met leading_score
+    if args.run_id:
+        try:
+            with get_cursor() as cur:
+                validate_step_input(
+                    conn=cur.connection,
+                    step_name="compute_barrier_weights",
+                    upstream_table="qbn.barrier_outcomes",
+                    asset_id=args.asset_id,
+                    run_id=None,  # REASON: barrier_outcomes is global, heeft geen run_id kolom
+                    min_rows=1,  # REASON: Incrementele update mogelijk
+                    extra_where="leading_score IS NOT NULL",
+                    log_run_id=args.run_id  # REASON: Log wel de echte run_id voor traceability
+                )
+        except StepValidationError as e:
+            logger.info(f"Upstream validation note: {e}")
+        except Exception as e:
+            logger.warning(f"Upstream validation failed (DB issue): {e}")
     
     # Setup output directory
     output_dir = Path(args.output_dir) if args.output_dir else PROJECT_ROOT / '_validation' / 'ida_weights'

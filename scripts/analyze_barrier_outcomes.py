@@ -34,26 +34,23 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from database.db import get_cursor
 from core.logging_utils import setup_logging
+from core.output_manager import ValidationOutputManager
 
-def setup_output_dirs(custom_dir=None):
-    """Setup output directories and archive existing plots."""
+def setup_output_dirs(asset_id: Optional[int] = None, run_id: Optional[str] = None, custom_dir: Optional[str] = None):
+    """Setup output directories met nieuwe gestructureerde aanpak."""
     if custom_dir:
+        # Respecteer expliciet argument (backward compatibility)
         output_dir = Path(custom_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
-    timestamp = datetime.now().strftime("%y%m%d-%H-%M-%S")
-    output_dir = PROJECT_ROOT / "_validation" / "outcome_barrier_analysis"
-    archive_dir = PROJECT_ROOT / "_validation" / "archive"
-    if output_dir.exists():
-        archive_subdir = archive_dir / f"outcome_barrier_{timestamp}"
-        archive_subdir.mkdir(parents=True, exist_ok=True)
-        for png in output_dir.glob("*.png"):
-            try:
-                shutil.move(str(png), str(archive_subdir / png.name))
-            except Exception:
-                pass
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Gebruik ValidationOutputManager voor gestructureerde output met automatische archivering
+    output_mgr = ValidationOutputManager()
+    output_dir = output_mgr.create_output_dir(
+        script_name="barrier_analysis",
+        asset_id=asset_id or 0,
+        run_id=run_id
+    )
     return output_dir
 
 BARRIER_COLS = [
@@ -293,13 +290,14 @@ def analyze_stats(df: pd.DataFrame, output_dir: Path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--asset-id', type=int, help='Asset ID')
+    parser.add_argument('--run-id', type=str, help='Run identifier for traceability')
     parser.add_argument('--output-dir', type=str, help='Custom output directory')
     args = parser.parse_args()
     
     logger = setup_logging("analyze_barrier_outcomes")
-    logger.info(f"🚀 Starting analysis. Asset: {args.asset_id}, Output: {args.output_dir}")
+    logger.info(f"🚀 Starting analysis. Asset: {args.asset_id}, Run ID: {args.run_id}, Output: {args.output_dir}")
     
-    output_dir = setup_output_dirs(args.output_dir)
+    output_dir = setup_output_dirs(asset_id=args.asset_id, run_id=args.run_id, custom_dir=args.output_dir)
     logger.info(f"📂 Output directory prepared: {output_dir}")
     
     logger.info("📡 Fetching data from database...")

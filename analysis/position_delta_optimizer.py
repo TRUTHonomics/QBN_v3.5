@@ -689,24 +689,25 @@ class PositionDeltaThresholdOptimizer:
         
         logger.info(f"Saved heatmap to {output_path}")
     
-    def save_results(self, results: Dict[str, DeltaThresholdResult]):
+    def save_results(self, results: Dict[str, DeltaThresholdResult], run_id: Optional[str] = None):
         """
         Sla resultaten op in database en genereer report.
         
         Args:
             results: Dict met DeltaThresholdResult per combinatie
+            run_id: Optional run ID for traceability
         """
         if not results:
             logger.warning("No results to save")
             return
         
         # Save to database
-        self._save_to_db(results)
+        self._save_to_db(results, run_id=run_id)
         
         # Generate markdown report
         self._generate_report(results)
     
-    def _save_to_db(self, results: Dict[str, DeltaThresholdResult]):
+    def _save_to_db(self, results: Dict[str, DeltaThresholdResult], run_id: Optional[str] = None):
         """Sla thresholds op in qbn.position_delta_threshold_config."""
         import json
         
@@ -716,14 +717,15 @@ class PositionDeltaThresholdOptimizer:
             for key, result in results.items():
                 cur.execute("""
                     INSERT INTO qbn.position_delta_threshold_config 
-                        (asset_id, delta_type, score_type, threshold, mi_score, distribution, source_method)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        (asset_id, delta_type, score_type, threshold, mi_score, distribution, source_method, run_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (asset_id, delta_type, score_type) 
                     DO UPDATE SET 
                         threshold = EXCLUDED.threshold,
                         mi_score = EXCLUDED.mi_score,
                         distribution = EXCLUDED.distribution,
                         source_method = EXCLUDED.source_method,
+                        run_id = EXCLUDED.run_id,
                         updated_at = NOW()
                 """, (
                     self.asset_id,
@@ -732,10 +734,21 @@ class PositionDeltaThresholdOptimizer:
                     result.optimal_threshold,
                     result.mi_score,
                     json.dumps(result.distribution),
-                    'MI Grid Search'
+                    'MI Grid Search',
+                    run_id
                 ))
         
         logger.info(f"✅ Delta thresholds saved for asset {self.asset_id}")
+        
+        # HANDSHAKE_OUT logging
+        from core.step_validation import log_handshake_out
+        log_handshake_out(
+            step="run_position_delta_threshold_analysis",
+            target="qbn.position_delta_threshold_config",
+            run_id=run_id or "N/A",
+            rows=len(results),
+            operation="INSERT"
+        )
     
     def _generate_report(self, results: Dict[str, DeltaThresholdResult]):
         """Genereer markdown report."""

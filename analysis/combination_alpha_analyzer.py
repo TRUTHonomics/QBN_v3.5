@@ -574,8 +574,20 @@ class CombinationAlphaAnalyzer:
                 page_size=500
             )
         
-        logger.info(f"Saved {len(rows)} combination results to database")
-        return len(rows)
+        saved_count = len(rows)
+        logger.info(f"Saved {saved_count} combination results to database")
+        
+        # HANDSHAKE_OUT logging
+        from core.step_validation import log_handshake_out
+        log_handshake_out(
+            step="run_combination_analysis",
+            target="qbn.combination_alpha",
+            run_id=self.run_id or "N/A",
+            rows=saved_count,
+            operation="INSERT"
+        )
+        
+        return saved_count
     
     def save_to_json(
         self,

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import subprocess
 import time
+import uuid
+from datetime import datetime
 from typing import Any
 
 from dagster import AssetKey, MetadataValue, SourceAsset, asset
@@ -46,8 +48,43 @@ kfl_mtf_signals_conf = SourceAsset(
 
 
 # ============================================================================
-# HELPER FUNCTION
+# HELPER FUNCTIONS
 # ============================================================================
+
+_RUN_ID_FILE = "/tmp/qbn_current_run_id"
+
+
+def _resolve_run_id(cfg) -> str:
+    """
+    Geeft cfg.run_id terug, of genereert eenmalig een nieuw run_id.
+    
+    REASON: Container-file approach zorgt ervoor dat alle assets binnen
+    één pipeline run hetzelfde run_id gebruiken zonder de Dagster graph te wijzigen.
+    """
+    if cfg.run_id:
+        return cfg.run_id
+    
+    # Check of een eerder asset in deze run al een run_id heeft geschreven
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "QBN_v4_Training", "cat", _RUN_ID_FILE],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+        pass
+    
+    # Genereer nieuw run_id en schrijf naar container-file
+    new_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+    subprocess.run(
+        ["docker", "exec", "QBN_v4_Training", "bash", "-c", f"echo '{new_id}' > {_RUN_ID_FILE}"],
+        check=True,
+        timeout=5
+    )
+    return new_id
 
 
 def _run_training_script(
@@ -66,6 +103,9 @@ def _run_training_script(
     Returns:
         Dict met stdout, stderr, returncode en elapsed_time_sec.
     """
+    cfg = context.resources.training_run_config
+    run_id = _resolve_run_id(cfg)
+    
     cmd = [
         "docker",
         "exec",
@@ -74,8 +114,14 @@ def _run_training_script(
         f"/app/{script_path}",
     ]
 
-    if extra_args:
-        cmd.extend(extra_args)
+    # Voeg extra args toe
+    args = extra_args or []
+    
+    # Auto-inject --run-id als het niet al aanwezig is
+    if "--run-id" not in args:
+        args.extend(["--run-id", run_id])
+    
+    cmd.extend(args)
 
     context.log.info(f"Executing: {' '.join(cmd)}")
 
@@ -100,6 +146,7 @@ def _run_training_script(
         "stdout_lines": len(result.stdout.splitlines()),
         "stderr_lines": len(result.stderr.splitlines()),
         "elapsed_time_sec": elapsed,
+        "run_id": run_id,
     }
 
 
@@ -147,8 +194,7 @@ def composite_threshold_config(context) -> dict:
     if not cfg.enforce_diversity:
         args.append("--no-diversity-check")
 
-    if cfg.run_id:
-        args.extend(["--run-id", cfg.run_id])
+    # REASON: --run-id wordt automatisch toegevoegd door _run_training_script
 
     result = _run_training_script("scripts/run_threshold_analysis.py", context, args)
 
@@ -203,8 +249,7 @@ def barrier_outcomes(context) -> dict:
         args.append("--incremental")
     if cfg.overwrite:
         args.append("--overwrite")
-    if cfg.run_id:
-        args.extend(["--run-id", cfg.run_id])
+    # REASON: --run-id wordt automatisch toegevoegd door _run_training_script
 
     result = _run_training_script("scripts/barrier_backfill.py", context, args)
 
@@ -254,8 +299,7 @@ def barrier_outcomes_leading(context) -> dict:
 
     if cfg.overwrite:
         args.append("--overwrite")
-    if cfg.run_id:
-        args.extend(["--run-id", cfg.run_id])
+    # REASON: --run-id wordt automatisch toegevoegd door _run_training_script
 
     result = _run_training_script("scripts/materialize_leading_scores.py", context, args)
 
@@ -302,8 +346,7 @@ def barrier_outcomes_weights(context) -> dict:
         "--config", cfg.ida_config,
     ]
 
-    if cfg.run_id:
-        args.extend(["--run-id", cfg.run_id])
+    # REASON: --run-id wordt automatisch toegevoegd door _run_training_script
 
     result = _run_training_script("scripts/compute_barrier_weights.py", context, args)
 
@@ -349,8 +392,7 @@ def signal_weights(context) -> dict:
         "--layer", cfg.alpha_layer,
     ]
 
-    if cfg.run_id:
-        args.extend(["--run-id", cfg.run_id])
+    # REASON: --run-id wordt automatisch toegevoegd door _run_training_script
 
     result = _run_training_script("alpha-analysis/analyze_signal_alpha.py", context, args)
 
@@ -400,8 +442,7 @@ def signal_combinations(context) -> dict:
 
     if not cfg.use_gpu:
         args.append("--no-gpu")
-    if cfg.run_id:
-        args.extend(["--run-id", cfg.run_id])
+    # REASON: --run-id wordt automatisch toegevoegd door _run_training_script
 
     result = _run_training_script("scripts/run_combination_analysis.py", context, args)
 
@@ -537,6 +578,7 @@ def cpt_cache(context) -> dict:
     Output: qbn.cpt_cache
     """
     cfg = context.resources.training_run_config
+    run_id = _resolve_run_id(cfg)
 
     # REASON: CPT generator wordt via python -c aangeroepen
     cmd = [
@@ -546,11 +588,11 @@ def cpt_cache(context) -> dict:
         "python",
         "-c",
         f"from inference.qbn_v3_cpt_generator import QBNv3CPTGenerator; "
-        f"gen = QBNv3CPTGenerator(); "
+        f"gen = QBNv3CPTGenerator(run_id='{run_id}'); "
         f"gen.generate_all_cpts(asset_id={cfg.asset_id})",
     ]
 
-    context.log.info(f"Executing: {' '.join(cmd[:4])} [python -c ...]")
+    context.log.info(f"Executing: {' '.join(cmd[:4])} [python -c ...] (run_id={run_id})")
 
     start = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
@@ -569,6 +611,7 @@ def cpt_cache(context) -> dict:
 
     context.add_output_metadata({
         "asset_id": MetadataValue.int(cfg.asset_id),
+        "run_id": MetadataValue.text(run_id),
         "execution_time_sec": MetadataValue.float(elapsed),
         "stdout_lines": MetadataValue.int(len(result.stdout.splitlines())),
     })
@@ -577,4 +620,64 @@ def cpt_cache(context) -> dict:
         "returncode": result.returncode,
         "stdout_lines": len(result.stdout.splitlines()),
         "elapsed_time_sec": elapsed,
+        "run_id": run_id,
     }
+
+
+@asset(
+    key=AssetKey(["qbn", "training_analysis"]),
+    deps=[AssetKey(["qbn", "cpt_cache"])],
+    description="Post-processing: Analyse training run resultaten en genereer rapporten",
+    metadata={
+        "table_name": "N/A (generates reports only)",
+        "reads_from": ["logs", "database"],
+        "gpu_required": False,
+        "script": "analysis/pipeline_run_analyzer.py",
+    },
+    tags={
+        "schema": "qbn",
+        "gpu": "false",
+        "stage": "post_processing",
+        "category": "analysis",
+        "data_volume": "low",
+    },
+    required_resource_keys={"postgres", "training_run_config"},
+)
+def training_analysis(context) -> dict:
+    """
+    Analyseert training run resultaten en genereert rapporten.
+    
+    Script: analysis/pipeline_run_analyzer.py
+    Output: _validation/{timestamp}-pipeline_analysis-asset_{id}-{run_id}/
+    """
+    cfg = context.resources.training_run_config
+    run_id = _resolve_run_id(cfg)
+    
+    context.log.info(f"Starting pipeline analysis for run_id={run_id}, asset={cfg.asset_id}")
+    
+    cmd = [
+        "docker", "exec", "QBN_v4_Training",
+        "python", "analysis/pipeline_run_analyzer.py",
+        "--asset-id", str(cfg.asset_id),
+        "--run-id", run_id
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=True)
+    
+    context.log.info("Pipeline analysis complete")
+    context.log.info(result.stdout)
+    
+    # Parse output directory from stdout
+    import re
+    output_dir_match = re.search(r'Output: (.+)', result.stdout)
+    output_dir = output_dir_match.group(1) if output_dir_match else "unknown"
+    
+    context.add_output_metadata({
+        "asset_id": MetadataValue.int(cfg.asset_id),
+        "run_id": MetadataValue.text(run_id),
+        "output_directory": MetadataValue.text(output_dir),
+        "analysis_time": MetadataValue.text(datetime.now().isoformat()),
+    })
+    
+    return {"run_id": run_id, "output_directory": output_dir}
+

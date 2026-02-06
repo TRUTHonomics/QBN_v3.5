@@ -35,6 +35,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from core.logging_utils import setup_logging
+from core.step_validation import log_handshake_out
+from core.output_manager import ValidationOutputManager
+from database.db import get_cursor
 
 logger = setup_logging("threshold_analysis")
 
@@ -505,6 +508,24 @@ def sync_to_database(yaml_path: Path, dry_run: bool = False, run_id: Optional[st
     from analysis.config_persister import ConfigPersister
     persister = ConfigPersister(run_id=run_id)
     persister.sync_from_yaml(yaml_path, dry_run=dry_run)
+    
+    # HANDSHAKE_OUT logging (alleen als niet dry_run - dry_run schrijft niet naar DB)
+    if not dry_run:
+        # Haal aantal rows op dat gesynct is (composite_threshold_config)
+        with get_cursor() as cur:
+            if run_id:
+                cur.execute("SELECT COUNT(*) FROM qbn.composite_threshold_config WHERE run_id = %s", (run_id,))
+            else:
+                cur.execute("SELECT COUNT(*) FROM qbn.composite_threshold_config")
+            rows_synced = cur.fetchone()[0]
+        
+        log_handshake_out(
+            step="run_threshold_analysis",
+            target="qbn.composite_threshold_config",
+            run_id=run_id or "N/A",
+            rows=rows_synced,
+            operation="INSERT/UPDATE"
+        )
 
 
 def main():
@@ -557,8 +578,19 @@ def main():
         logger.warning("optimaliseren binnen de Event Windows.")
         logger.warning("=" * 70)
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # REASON: Gebruik ValidationOutputManager voor gestructureerde output met run_id traceerbaarheid
+    if args.output_dir != '_validation/threshold_analysis':
+        # Respecteer expliciet --output-dir argument (backward compatibility)
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # Gebruik nieuwe structuur met automatische archivering
+        output_mgr = ValidationOutputManager()
+        output_dir = output_mgr.create_output_dir(
+            script_name="threshold_analysis",
+            asset_id=args.asset_id,
+            run_id=args.run_id
+        )
     
     # Diversity enforcement
     enforce_diversity = not args.no_diversity_check
@@ -604,11 +636,7 @@ def main():
         logger.info("✅ Persistence complete")
         return
     
-    # REASON: Archiveer oude resultaten voordat we een nieuwe analyse starten.
-    # Dit voorkomt vervuiling van de output directory en maakt vergelijking makkelijker.
-    archive_old_results(output_dir)
-    
-    # Run analysis
+    # Run analysis (OutputManager doet automatisch archivering)
     max_workers = args.workers
     results = run_analysis(
         asset_id=args.asset_id,

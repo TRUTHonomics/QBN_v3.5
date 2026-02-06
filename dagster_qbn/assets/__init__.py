@@ -14,6 +14,7 @@ from .tables import (
     position_delta_threshold_config,
     signal_combinations,
     signal_weights,
+    training_analysis,
 )
 from .validation import (
     backtest,
@@ -44,6 +45,7 @@ __all__ = [
     "event_windows",
     "position_delta_threshold_config",
     "cpt_cache",
+    "training_analysis",
     # Validation Assets
     "barrier_status",
     "signal_classification",

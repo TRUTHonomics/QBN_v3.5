@@ -38,6 +38,7 @@ from inference.signal_aggregator import SignalAggregator
 from inference.node_types import SemanticClass, CompositeState, OutcomeState, RegimeState, BarrierOutcomeState
 from inference.regime_detector import HTFRegimeDetector
 from inference.gpu.gpu_cpt_generator import GPUCPTGenerator
+from core.step_validation import validate_step_input, log_handshake_out, StepValidationError
 from inference.validation.cpt_validator import CPTValidator
 from database.db import get_cursor
 from config.network_config import MIN_OBS_PER_CELL, MIN_TOTAL_OBS, COVERAGE_THRESHOLD
@@ -456,6 +457,10 @@ class QBNv3CPTGenerator:
             'observations': len(in_event_data)  # REASON: Top-level observations voor CPTCacheManager
         }
         
+        # REASON: Valideer CPT kwaliteit (coverage, entropy) zoals bij globale nodes
+        validation = self._validate_cpt_quality(cpt_data, asset_id=asset_id)
+        cpt_data['validation'] = validation.__dict__
+        
         return cpt_data
 
     # =========================================================================
@@ -494,7 +499,7 @@ class QBNv3CPTGenerator:
             "|".join(k): v for k, v in cpt_results.items()
         }
         
-        return {
+        cpt_data = {
             'node': node_name,
             'parents': ['Delta_Leading', 'Time_Since_Entry'],
             'states': ['bearish', 'neutral', 'bullish'],
@@ -503,6 +508,12 @@ class QBNv3CPTGenerator:
             'metadata': {'version': '3.3', 'n_events': len(events)},
             'observations': len(in_event_data)
         }
+        
+        # REASON: Valideer CPT kwaliteit (coverage, entropy) zoals bij globale nodes
+        validation = self._validate_cpt_quality(cpt_data, asset_id=asset_id)
+        cpt_data['validation'] = validation.__dict__
+        
+        return cpt_data
 
     def generate_volatility_regime_cpt(self, asset_id: int, data: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -532,7 +543,7 @@ class QBNv3CPTGenerator:
             "|".join(k): v for k, v in cpt_results.items()
         }
         
-        return {
+        cpt_data = {
             'node': node_name,
             'parents': ['Delta_Coincident', 'Time_Since_Entry'],
             'states': ['low_vol', 'normal', 'high_vol'],
@@ -541,6 +552,12 @@ class QBNv3CPTGenerator:
             'metadata': {'version': '3.3', 'n_events': len(events)},
             'observations': len(in_event_data)
         }
+        
+        # REASON: Valideer CPT kwaliteit (coverage, entropy) zoals bij globale nodes
+        validation = self._validate_cpt_quality(cpt_data, asset_id=asset_id)
+        cpt_data['validation'] = validation.__dict__
+        
+        return cpt_data
 
     def generate_exit_timing_cpt(self, asset_id: int, data: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -570,7 +587,7 @@ class QBNv3CPTGenerator:
             "|".join(k): v for k, v in cpt_results.items()
         }
         
-        return {
+        cpt_data = {
             'node': node_name,
             'parents': ['Delta_Confirming', 'Time_Since_Entry', 'Current_PnL_ATR'],
             'states': ['exit_now', 'hold', 'extend'],
@@ -579,6 +596,12 @@ class QBNv3CPTGenerator:
             'metadata': {'version': '3.3', 'n_events': len(events)},
             'observations': len(in_event_data)
         }
+        
+        # REASON: Valideer CPT kwaliteit (coverage, entropy) zoals bij globale nodes
+        validation = self._validate_cpt_quality(cpt_data, asset_id=asset_id)
+        cpt_data['validation'] = validation.__dict__
+        
+        return cpt_data
 
 
     def _create_uniform_position_subpred_cpt(
@@ -964,6 +987,34 @@ class QBNv3CPTGenerator:
             logger.error(f"No data found for asset {asset_id}")
             return {}
 
+        # Validation guards: check upstream barrier_outcomes + event_windows
+        if hasattr(self, 'run_id') and self.run_id:
+            try:
+                from database.db import get_cursor
+                with get_cursor() as cur:
+                    validate_step_input(
+                        conn=cur.connection,
+                        step_name="cpt_generation_barriers",
+                        upstream_table="qbn.barrier_outcomes",
+                        asset_id=asset_id,
+                        run_id=None,  # REASON: barrier_outcomes is global, heeft geen run_id kolom
+                        min_rows=100,
+                        extra_where="training_weight IS NOT NULL",
+                        log_run_id=self.run_id  # REASON: Log wel de echte run_id voor traceability
+                    )
+                    validate_step_input(
+                        conn=cur.connection,
+                        step_name="cpt_generation_events",
+                        upstream_table="qbn.event_windows",
+                        asset_id=asset_id,
+                        run_id=self.run_id,
+                        min_rows=10
+                    )
+            except StepValidationError as e:
+                logger.info(f"Upstream validation note: {e}")
+            except Exception as e:
+                logger.warning(f"Upstream validation failed (DB issue): {e}")
+
         cpts = {}
 
         # 1. HTF Regime (Root)
@@ -1021,6 +1072,17 @@ class QBNv3CPTGenerator:
                 )
 
         logger.info(f"✅ Generated {len(cpts)} CPTs for asset {asset_id}")
+        
+        # HANDSHAKE_OUT logging (alleen als daadwerkelijk naar DB geschreven)
+        if save_to_db:
+            log_handshake_out(
+                step="qbn_v3_cpt_generator",
+                target="qbn.cpt_cache",
+                run_id=self.run_id or "N/A",
+                rows=len(cpts),
+                operation="INSERT"
+            )
+        
         return cpts
 
     def generate_composite_cpts(
@@ -1729,10 +1791,18 @@ class QBNv3CPTGenerator:
         logger.info("Started. Logging to: %s", log_file)
 
     def _snapshot_db_config(self, asset_id: Optional[int] = None):
-        val_dir = os.path.join(os.getcwd(), '_validation', 'config_snapshots')
-        os.makedirs(val_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        snapshot_file = os.path.join(val_dir, f"config_snapshot_v3_{f'asset_{asset_id}_' if asset_id else ''}{ts}.json")
+        """Snapshot database config naar gestructureerde output directory."""
+        from core.output_manager import ValidationOutputManager
+        
+        output_mgr = ValidationOutputManager()
+        output_dir = output_mgr.create_output_dir(
+            script_name="cpt_generation",
+            asset_id=asset_id or 0,
+            run_id=self.run_id
+        )
+        
+        snapshot_file = output_dir / "config_snapshot_v3.json"
+        
         try:
             with get_cursor() as cur:
                 logger.debug("📸 Taking snapshot of qbn.signal_classification...")

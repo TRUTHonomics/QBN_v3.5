@@ -32,6 +32,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.logging_utils import setup_logging
 from analysis.position_delta_optimizer import PositionDeltaThresholdOptimizer
+from core.step_validation import validate_step_input, log_handshake_out, StepValidationError
+from database.db import get_cursor
 
 # =============================================================================
 # MAIN
@@ -69,6 +71,12 @@ def main():
         action="store_true",
         help="Alleen analyseren, niet opslaan in database"
     )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Run ID for traceability"
+    )
     
     args = parser.parse_args()
     
@@ -80,6 +88,7 @@ def main():
     logger.info("POSITION DELTA THRESHOLD ANALYSIS")
     logger.info("=" * 60)
     logger.info(f"Asset ID: {args.asset_id}")
+    logger.info(f"Run ID: {args.run_id or 'N/A'}")
     logger.info(f"Lookback: {lookback_desc}")
     logger.info(f"Diversity constraints: {'disabled' if args.no_diversity else 'enabled'}")
     logger.info("=" * 60)
@@ -104,6 +113,23 @@ def main():
             logger.error("   Hint: Draai eerst 'Full Training Run' in het training menu")
             sys.exit(1)
         
+        # Validation guard: check upstream event_windows
+        if args.run_id:
+            try:
+                with get_cursor() as cur:
+                    validate_step_input(
+                        conn=cur.connection,
+                        step_name="position_delta_threshold_analysis",
+                        upstream_table="qbn.event_windows",
+                        asset_id=args.asset_id,
+                        run_id=args.run_id,
+                        min_rows=10
+                    )
+            except StepValidationError as e:
+                logger.info(f"Upstream validation note: {e}")
+            except Exception as e:
+                logger.warning(f"Upstream validation failed (DB issue): {e}")
+        
         # Voer analyse uit
         logger.info("\n🔬 Running MI Grid Search...")
         results = optimizer.analyze()
@@ -127,7 +153,7 @@ def main():
         # Opslaan
         if not args.dry_run:
             logger.info("\n💾 Saving results to database...")
-            optimizer.save_results(results)
+            optimizer.save_results(results, run_id=args.run_id)
             logger.info("✅ Results saved successfully")
         else:
             logger.info("\n⚠️ Dry run - results NOT saved to database")

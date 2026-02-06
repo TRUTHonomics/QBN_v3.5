@@ -9,7 +9,7 @@ from dagster import AssetSelection, define_asset_job
 # REASON: Job voor volledige training run (alle QBN table assets)
 full_training_job = define_asset_job(
     name="full_training_run",
-    description="Voert volledige QBN training pipeline uit (threshold → barrier → ... → CPT)",
+    description="Voert volledige QBN training pipeline uit (threshold → barrier → ... → CPT → analysis)",
     selection=AssetSelection.keys(
         ["qbn", "composite_threshold_config"],
         ["qbn", "barrier_outcomes"],
@@ -20,6 +20,7 @@ full_training_job = define_asset_job(
         ["qbn", "event_windows"],
         ["qbn", "position_delta_threshold_config"],
         ["qbn", "cpt_cache"],
+        ["qbn", "training_analysis"],  # Post-processing analyzer
     ),
 )
 
@@ -44,7 +45,7 @@ full_validation_job = define_asset_job(
 # REASON: Gecombineerde job voor training + validation in één keer
 full_pipeline_job = define_asset_job(
     name="full_pipeline_run",
-    description="Training + Validation in één run (QBN table assets → validation assets → GO/NO-GO)",
+    description="Training + Validation in één run (QBN table assets → analysis → validation assets → GO/NO-GO)",
     selection=AssetSelection.keys(
         # Training assets
         ["qbn", "composite_threshold_config"],
@@ -56,6 +57,7 @@ full_pipeline_job = define_asset_job(
         ["qbn", "event_windows"],
         ["qbn", "position_delta_threshold_config"],
         ["qbn", "cpt_cache"],
+        ["qbn", "training_analysis"],  # Post-processing analyzer
         # Validation assets
         ["validation", "barrier_status"],
         ["validation", "signal_classification"],

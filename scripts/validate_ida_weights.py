@@ -36,6 +36,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from database.db import get_cursor
 from config.ida_config import IDAConfig
 from core.logging_utils import setup_logging
+from core.output_manager import ValidationOutputManager
 
 # Plotting imports
 try:
@@ -53,10 +54,24 @@ logger = setup_logging("validate_ida_weights")
 class IDAWeightValidator:
     """Valideert IDA training weights met visualisaties."""
     
-    def __init__(self, asset_id: int, output_dir: Optional[Path] = None):
+    def __init__(self, asset_id: int, output_dir: Optional[Path] = None, run_id: Optional[str] = None):
         self.asset_id = asset_id
-        self.output_dir = output_dir or (PROJECT_ROOT / '_validation' / 'ida_weights')
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.run_id = run_id
+        
+        # REASON: Gebruik ValidationOutputManager voor gestructureerde output met run_id traceerbaarheid
+        if output_dir:
+            # Respecteer expliciet argument (backward compatibility)
+            self.output_dir = Path(output_dir)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # Gebruik nieuwe structuur met automatische archivering
+            output_mgr = ValidationOutputManager()
+            self.output_dir = output_mgr.create_output_dir(
+                script_name="ida_weights_validation",
+                asset_id=asset_id,
+                run_id=run_id
+            )
+        
         self.config = IDAConfig.baseline()
     
     def fetch_data(self) -> pd.DataFrame:
@@ -341,12 +356,13 @@ class IDAWeightValidator:
 def main():
     parser = argparse.ArgumentParser(description='Validate IDA Training Weights')
     parser.add_argument('--asset-id', type=int, required=True, help='Asset ID')
+    parser.add_argument('--run-id', type=str, help='Run identifier for traceability')
     parser.add_argument('--output-dir', type=str, default=None, help='Output directory')
     
     args = parser.parse_args()
     
     output_dir = Path(args.output_dir) if args.output_dir else None
-    validator = IDAWeightValidator(args.asset_id, output_dir)
+    validator = IDAWeightValidator(args.asset_id, output_dir, run_id=args.run_id)
     result = validator.run()
     
     # Print report

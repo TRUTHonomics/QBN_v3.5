@@ -32,6 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from database.db import get_cursor
 from config.ida_config import IDAConfig
 from core.logging_utils import setup_logging
+from core.step_validation import validate_step_input, log_handshake_out, StepValidationError
 
 logger = setup_logging("materialize_leading_scores")
 
@@ -265,6 +266,16 @@ class LeadingScoreMaterializer:
                 updated = cur.rowcount
         
         logger.info(f"Updated {updated:,} rijen met leading_score")
+        
+        # HANDSHAKE_OUT logging
+        log_handshake_out(
+            step="materialize_leading_scores",
+            target="qbn.barrier_outcomes",
+            run_id=self.run_id or "N/A",
+            rows=updated,
+            operation="UPDATE"
+        )
+        
         return updated
     
     def validate_scores(self) -> Dict:
@@ -321,6 +332,26 @@ def main():
     args = parser.parse_args()
     
     logger.info(f"Starting leading_score materialization for asset {args.asset_id} (run_id: {args.run_id})")
+    
+    # Validation guard: check upstream barrier_outcomes
+    if args.run_id:
+        try:
+            with get_cursor() as cur:
+                validate_step_input(
+                    conn=cur.connection,
+                    step_name="materialize_leading_scores",
+                    upstream_table="qbn.barrier_outcomes",
+                    asset_id=args.asset_id,
+                    run_id=None,  # REASON: barrier_outcomes is global, heeft geen run_id kolom
+                    min_rows=1,  # REASON: Incrementele update, kan 0 rows zijn als alles up-to-date is
+                    log_run_id=args.run_id  # REASON: Log wel de echte run_id voor traceability
+                )
+        except StepValidationError as e:
+            # Handshake IS gelogd - data is onvoldoende maar dat is OK voor incrementele updates
+            logger.info(f"Upstream validation note: {e}")
+        except Exception as e:
+            # DB error - handshake NIET gelogd
+            logger.warning(f"Upstream validation failed (DB issue): {e}")
     
     materializer = LeadingScoreMaterializer(
         asset_id=args.asset_id,

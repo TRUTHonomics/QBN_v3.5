@@ -235,16 +235,18 @@ def run_backtest_internal(config: BacktestConfig) -> Tuple[Dict[str, Any], List[
     # Set index terug voor rest van processing
     train_df = train_df_reset.set_index("time_1")
     
+    # REASON: Event-based CPTs (Momentum, Volatility, Exit, Position) roepen EventWindowDetector aan
+    # die time_1 als kolom verwacht, niet als index. Gebruik train_df_reset voor die vier.
     cpts = {
         "HTF_Regime": generator.generate_htf_regime_cpt(config.asset_id, data=train_df),
         "Trade_Hypothesis": generator.generate_trade_hypothesis_cpt(config.asset_id, data=train_df),
         "Prediction_1h": generator.generate_prediction_cpt(config.asset_id, "1h", data=train_df),
         "Prediction_4h": generator.generate_prediction_cpt(config.asset_id, "4h", data=train_df),
         "Prediction_1d": generator.generate_prediction_cpt(config.asset_id, "1d", data=train_df),
-        "Momentum_Prediction": generator.generate_momentum_prediction_cpt(config.asset_id, data=train_df),
-        "Volatility_Regime": generator.generate_volatility_regime_cpt(config.asset_id, data=train_df),
-        "Exit_Timing": generator.generate_exit_timing_cpt(config.asset_id, data=train_df),
-        "Position_Prediction": generator._generate_position_prediction_cpt(config.asset_id, data=train_df),
+        "Momentum_Prediction": generator.generate_momentum_prediction_cpt(config.asset_id, data=train_df_reset),
+        "Volatility_Regime": generator.generate_volatility_regime_cpt(config.asset_id, data=train_df_reset),
+        "Exit_Timing": generator.generate_exit_timing_cpt(config.asset_id, data=train_df_reset),
+        "Position_Prediction": generator._generate_position_prediction_cpt(config.asset_id, data=train_df_reset),
     }
     generator.load_signal_classification(config.asset_id, "1h")
     for sc in SemanticClass:

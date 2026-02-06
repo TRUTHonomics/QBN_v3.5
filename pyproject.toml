@@ -1,0 +1,5 @@
+# QBN v4 – Dagster code location voor dagster dev / dg dev
+# Zonder dit blok: "No arguments given and no [tool.dagster] block in pyproject.toml found"
+
+[tool.dagster]
+module_name = "dagster_qbn.definitions"

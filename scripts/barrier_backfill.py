@@ -30,6 +30,7 @@ from inference.barrier_outcome_generator import BarrierOutcomeGenerator
 from inference.gpu_barrier_calculator import GPUBarrierCalculator
 from database.db import get_cursor
 from core.logging_utils import setup_logging
+from core.step_validation import validate_step_input, log_handshake_out, StepValidationError
 
 
 class BarrierBackfill:
@@ -46,8 +47,20 @@ class BarrierBackfill:
         self.asset_id = asset_id
         self.config = config
         self.batch_size = batch_size
-        self.checkpoint_file = checkpoint_file or f'_checkpoint_barrier_{asset_id}.json'
         self.run_id = run_id
+        
+        # REASON: Gebruik ValidationOutputManager voor checkpoint in gestructureerde directory
+        if checkpoint_file:
+            self.checkpoint_file = checkpoint_file  # Respecteer expliciet argument (backward compatibility)
+        else:
+            from core.output_manager import ValidationOutputManager
+            output_mgr = ValidationOutputManager()
+            output_dir = output_mgr.create_output_dir(
+                script_name="barrier_backfill",
+                asset_id=asset_id,
+                run_id=run_id
+            )
+            self.checkpoint_file = str(output_dir / f"checkpoint_{asset_id}.json")
         
         self.gpu_calc = GPUBarrierCalculator(
             barriers=config.up_barriers,
@@ -556,6 +569,15 @@ class BarrierBackfill:
         # REASON: execute_values is 10-50x sneller dan executemany
         with get_cursor(commit=True) as cur:
             execute_values(cur, query, rows, page_size=5000)
+        
+        # HANDSHAKE_OUT logging
+        log_handshake_out(
+            step="barrier_backfill",
+            target="qbn.barrier_outcomes",
+            run_id=self.run_id or "N/A",
+            rows=len(rows),
+            operation="INSERT"
+        )
 
 
 def main():
@@ -599,6 +621,23 @@ def main():
         return
     
     logger.info(f"Starting barrier backfill for asset {args.asset_id} (run_id: {args.run_id})")
+    
+    # REASON: Valideer dat upstream threshold config aanwezig is
+    if args.run_id:
+        try:
+            with get_cursor() as cur:
+                validate_step_input(
+                    conn=cur.connection,
+                    step_name="barrier_backfill",
+                    upstream_table="qbn.composite_threshold_config",
+                    asset_id=args.asset_id,
+                    run_id=args.run_id,
+                    min_rows=1
+                )
+        except StepValidationError as e:
+            logger.info(f"Upstream validation note: {e}")
+        except Exception as e:
+            logger.warning(f"Upstream validation failed (DB issue): {e}")
     
     config = BarrierConfig.from_database(args.config)
     

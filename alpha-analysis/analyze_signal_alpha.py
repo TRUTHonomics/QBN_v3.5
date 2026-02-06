@@ -13,6 +13,7 @@ import io
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.db import get_cursor
 from core.logging_utils import setup_logging
+from core.step_validation import validate_step_input, log_handshake_out, StepValidationError
 
 # REASON: Data-driven signaal analyse voor gewichtsbepaling.
 # Gebruikt Mutual Information (MI) en Hit Rate om voorspellingskracht te meten.
@@ -451,6 +452,15 @@ class SignalAlphaAnalyzer:
         
         with get_cursor(commit=True) as cur:
             execute_values(cur, insert_query, data_to_insert)
+        
+        # HANDSHAKE_OUT logging
+        log_handshake_out(
+            step="analyze_signal_alpha",
+            target="qbn.signal_weights",
+            run_id=self.run_id or "N/A",
+            rows=len(data_to_insert),
+            operation="INSERT"
+        )
             
         # YAML Backup
         weights_dict = {}
@@ -472,6 +482,25 @@ if __name__ == "__main__":
                         help='Target layer: HYPOTHESIS (Leading) or CONFIDENCE (Coin/Conf)')
     parser.add_argument('--run-id', type=str, help='Run identifier for traceability')
     args = parser.parse_args()
+
+    # Validation guard: check upstream barrier_outcomes
+    if args.run_id:
+        try:
+            with get_cursor() as cur:
+                validate_step_input(
+                    conn=cur.connection,
+                    step_name="analyze_signal_alpha",
+                    upstream_table="qbn.barrier_outcomes",
+                    asset_id=args.asset,
+                    run_id=None,  # REASON: barrier_outcomes is global, heeft geen run_id kolom
+                    min_rows=100,  # REASON: Alpha-analyse vereist voldoende data
+                    extra_where="first_significant_barrier != 'none'",
+                    log_run_id=args.run_id  # REASON: Log wel de echte run_id voor traceability
+                )
+        except StepValidationError as e:
+            logging.info(f"Upstream validation note: {e}")
+        except Exception as e:
+            logging.warning(f"Upstream validation failed (DB issue): {e}")
 
     analyzer = SignalAlphaAnalyzer(asset_id=args.asset, layer=args.layer, run_id=args.run_id)
     if analyzer.fetch_data():

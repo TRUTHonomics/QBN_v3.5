@@ -729,3 +729,13 @@ def save_events_to_cache(events: List[EventWindow], run_id: Optional[str] = None
             ))
 
     logger.info(f"✅ Events saved to qbn.event_windows cache")
+    
+    # HANDSHAKE_OUT logging
+    from core.step_validation import log_handshake_out
+    log_handshake_out(
+        step="run_event_window_detection",
+        target="qbn.event_windows",
+        run_id=run_id or "N/A",
+        rows=len(events),
+        operation="INSERT"
+    )

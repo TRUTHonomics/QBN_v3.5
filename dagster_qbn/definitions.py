@@ -28,6 +28,7 @@ from dagster_qbn.assets import (
     signal_classification,
     signal_combinations,
     signal_weights,
+    training_analysis,
 )
 from dagster_qbn.jobs import full_pipeline_job, full_training_job, full_validation_job
 from dagster_qbn.resources.postgres import PostgresResource
@@ -76,6 +77,7 @@ defs = Definitions(
         event_windows,
         position_delta_threshold_config,
         cpt_cache,
+        training_analysis,
         # Validation Assets
         barrier_status,
         signal_classification,

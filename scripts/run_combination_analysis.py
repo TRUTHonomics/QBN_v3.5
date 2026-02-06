@@ -28,6 +28,8 @@ from analysis.combination_alpha_analyzer import CombinationAlphaAnalyzer, Analys
 from validation.combination_visualizations import CombinationVisualizer
 from validation.combination_report import CombinationReportGenerator
 from core.logging_utils import setup_logging
+from core.step_validation import validate_step_input, log_handshake_out, StepValidationError
+from database.db import get_cursor
 
 # Use Path for project root
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -191,6 +193,25 @@ def run_analysis(
         alpha=args.alpha,
         run_id=args.run_id
     )
+    
+    # Validation guard: check upstream barrier_outcomes
+    if args.run_id:
+        try:
+            with get_cursor() as cur:
+                validate_step_input(
+                    conn=cur.connection,
+                    step_name="run_combination_analysis",
+                    upstream_table="qbn.barrier_outcomes",
+                    asset_id=asset_id,
+                    run_id=None,  # REASON: barrier_outcomes is global, heeft geen run_id kolom
+                    min_rows=100,  # REASON: Combinatie-analyse vereist voldoende data
+                    extra_where="first_significant_barrier != 'none'",
+                    log_run_id=args.run_id  # REASON: Log wel de echte run_id voor traceability
+                )
+        except StepValidationError as e:
+            logger.info(f"Upstream validation note: {e}")
+        except Exception as e:
+            logger.warning(f"Upstream validation failed (DB issue): {e}")
     
     # Run analysis
     try:
