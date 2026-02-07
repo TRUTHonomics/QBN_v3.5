@@ -197,7 +197,7 @@ def insert_many(
         return  # niets te doen
 
     cols_formatted = ", ".join(columns)
-    sql = f"INSERT INTO {table} ({cols_formatted}) VALUES %s ON CONFLICT DO NOTHING"
+    sql = f"INSERT INTO {table} ({cols_formatted}) VALUES %s ON CONFLICT ON CONSTRAINT combination_alpha_run_unique DO NOTHING"
 
     with get_cursor(commit=True) as cur:
         execute_values(cur, sql, prepared_rows, page_size=page_size)

@@ -133,13 +133,13 @@ class QBNv3CPTGenerator:
         query = """
             SELECT horizon, combination_key, target_type, odds_ratio, or_ci_lower, classification, p_value_corrected
             FROM qbn.combination_alpha
-            WHERE asset_id = %s
+            WHERE asset_id = %s AND run_id = %s
             ORDER BY analyzed_at DESC
         """
         
         results = {}
         with get_cursor() as cur:
-            cur.execute(query, (asset_id,))
+            cur.execute(query, (asset_id, self.run_id))
             rows = cur.fetchall()
             
             for row in rows:
@@ -278,7 +278,7 @@ class QBNv3CPTGenerator:
             
         return self._threshold_loaders[horizon]
 
-    def load_signal_classification(self, asset_id: Optional[int] = None, horizon: Optional[str] = None, filter_suffix: Optional[str] = None):
+    def load_signal_classification(self, asset_id: Optional[int] = None, horizon: Optional[str] = None, filter_suffix: Optional[str] = None, run_id: Optional[str] = None):
         """
         Laad signal classification en weights uit database.
         
@@ -298,11 +298,11 @@ class QBNv3CPTGenerator:
             SELECT DISTINCT ON (signal_name, horizon)
                 signal_name, horizon, weight
             FROM qbn.signal_weights
-            WHERE (asset_id = %s OR asset_id = 0)
+            WHERE (asset_id = %s OR asset_id = 0) AND run_id = %s
             ORDER BY signal_name, horizon, asset_id DESC
             """
             with get_cursor() as cur:
-                cur.execute(weights_query, (asset_id,))
+                cur.execute(weights_query, (asset_id, run_id))
                 for full_name, h, weight in cur.fetchall():
                     weights_data[(full_name.lower(), h)] = float(weight or 1.0)
 
@@ -870,7 +870,7 @@ class QBNv3CPTGenerator:
         
         logger.info(f"Generating {node_name} CPT for asset {asset_id} (horizon={horizon})")
         
-        self.load_signal_classification(asset_id=asset_id, horizon=horizon, filter_suffix='60')
+        self.load_signal_classification(asset_id=asset_id, horizon=horizon, filter_suffix='60', run_id=self.run_id)
             
         available_signal_cols = []
         weights_list = []
@@ -1474,9 +1474,9 @@ class QBNv3CPTGenerator:
                 SELECT DISTINCT ON (signal_name, horizon)
                     signal_name, horizon, weight
                 FROM qbn.signal_weights
-                WHERE (asset_id = %s OR asset_id = 0)
+                WHERE (asset_id = %s OR asset_id = 0) AND run_id = %s
                 ORDER BY signal_name, horizon, asset_id DESC
-            """, (asset_id,))
+            """, (asset_id, self.run_id))
             for signal_name, horizon, weight in cur.fetchall():
                 weights_data[(signal_name.lower(), horizon)] = float(weight or 1.0)
         

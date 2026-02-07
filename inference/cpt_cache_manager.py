@@ -211,6 +211,11 @@ class CPTCacheManager:
                 entropy, info_gain, stability_score, semantic_score,
                 scope_type, scope_key, source_assets, save_mode, run_id
             ))
+            
+            # Retentie: bewaar 3 meest recente runs (alleen voor asset-specifieke CPTs)
+            if run_id and asset_id > 0:
+                from core.run_retention import retain_recent_runs_auto
+                retain_recent_runs_auto(cur.connection, "qbn.cpt_cache", asset_id)
 
         # REASON: Vermeld mode alleen indien relevant (conform gebruikerswens)
         mode_str = f", mode={save_mode}" if save_mode != 'not_applicable' else ""

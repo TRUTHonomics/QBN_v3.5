@@ -732,6 +732,8 @@ def save_events_to_cache(events: List[EventWindow], run_id: Optional[str] = None
     
     # HANDSHAKE_OUT logging
     from core.step_validation import log_handshake_out
+    from core.run_retention import retain_recent_runs_auto
+
     log_handshake_out(
         step="run_event_window_detection",
         target="qbn.event_windows",
@@ -739,3 +741,9 @@ def save_events_to_cache(events: List[EventWindow], run_id: Optional[str] = None
         rows=len(events),
         operation="INSERT"
     )
+    
+    # Retentie: bewaar 3 meest recente runs (haal asset_id uit eerste event)
+    if run_id and events:
+        asset_id = events[0].asset_id
+        with get_cursor() as cur:
+            retain_recent_runs_auto(cur.connection, "qbn.event_windows", asset_id)

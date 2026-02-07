@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.db import get_cursor
 from core.logging_utils import setup_logging
 from core.step_validation import validate_step_input, log_handshake_out, StepValidationError
+from core.run_retention import retain_recent_runs_auto
 
 # REASON: Data-driven signaal analyse voor gewichtsbepaling.
 # Gebruikt Mutual Information (MI) en Hit Rate om voorspellingskracht te meten.
@@ -408,7 +409,7 @@ class SignalAlphaAnalyzer:
             train_start, train_end, oos_start, oos_end, total_rows,
             last_trained_at, layer, run_id
         ) VALUES %s
-        ON CONFLICT (asset_id, signal_name, horizon, layer) DO UPDATE SET
+        ON CONFLICT (asset_id, signal_name, horizon, layer, run_id) DO UPDATE SET
             semantic_class = EXCLUDED.semantic_class,
             weight = EXCLUDED.weight,
             mutual_information = EXCLUDED.mutual_information,
@@ -461,6 +462,11 @@ class SignalAlphaAnalyzer:
             rows=len(data_to_insert),
             operation="INSERT"
         )
+        
+        # Retentie: bewaar 3 meest recente runs
+        if self.run_id:
+            with get_cursor() as cur:
+                retain_recent_runs_auto(cur.connection, "qbn.signal_weights", self.asset_id)
             
         # YAML Backup
         weights_dict = {}

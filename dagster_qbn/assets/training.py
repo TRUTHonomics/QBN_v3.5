@@ -280,7 +280,7 @@ def alpha_analysis(context) -> dict:
     description="Stap 8: Analyse signaalcombinaties (OR-logica) en classificeer Golden Rule/Promising/Noise",
     metadata={
         "reads_from": ["qbn.barrier_outcomes", "qbn.signal_classification"],
-        "writes_to": ["qbn.signal_combinations"],
+        "writes_to": ["qbn.combination_alpha"],
         "gpu_required": True,
         "script": "scripts/run_combination_analysis.py",
         "output_artifacts": ["JSON reports"],
@@ -308,7 +308,7 @@ def combination_analysis(context) -> dict:
             "asset_id": MetadataValue.int(asset_id),
             "stdout_lines": MetadataValue.int(result["stdout_lines"]),
             "execution_time_sec": MetadataValue.float(result["elapsed_time_sec"]),
-            "tables_written": MetadataValue.json(["qbn.signal_combinations"]),
+            "tables_written": MetadataValue.json(["qbn.combination_alpha"]),
         }
     )
 

@@ -37,6 +37,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from core.logging_utils import setup_logging
 from core.step_validation import log_handshake_out
 from core.output_manager import ValidationOutputManager
+from core.run_retention import retain_recent_runs_auto
 from database.db import get_cursor
 
 logger = setup_logging("threshold_analysis")
@@ -503,7 +504,7 @@ def save_per_node_results(results: Dict, output_dir: Path, asset_id: int) -> Lis
     return saved_files
 
 
-def sync_to_database(yaml_path: Path, dry_run: bool = False, run_id: Optional[str] = None):
+def sync_to_database(yaml_path: Path, dry_run: bool = False, run_id: Optional[str] = None, asset_id: Optional[int] = None):
     """Synchroniseer YAML naar database via ConfigPersister."""
     from analysis.config_persister import ConfigPersister
     persister = ConfigPersister(run_id=run_id)
@@ -526,6 +527,11 @@ def sync_to_database(yaml_path: Path, dry_run: bool = False, run_id: Optional[st
             rows=rows_synced,
             operation="INSERT/UPDATE"
         )
+        
+        # Retentie: bewaar 3 meest recente runs
+        if run_id and asset_id:
+            with get_cursor() as cur:
+                retain_recent_runs_auto(cur.connection, "qbn.composite_threshold_config", asset_id)
 
 
 def main():
@@ -615,7 +621,7 @@ def main():
             logger.error(f"YAML file not found: {yaml_path}")
             sys.exit(1)
         logger.info(f"Syncing {yaml_path} to database...")
-        sync_to_database(yaml_path, dry_run=args.dry_run, run_id=args.run_id)
+        sync_to_database(yaml_path, dry_run=args.dry_run, run_id=args.run_id, asset_id=args.asset_id)
         return
 
     # Handle just-apply mode
@@ -632,7 +638,7 @@ def main():
         logger.info("Persisting results to YAML and database...")
         target_path = Path(args.save_yaml) if args.save_yaml else None
         yaml_path = save_to_yaml(results, target_path, run_id=args.run_id)
-        sync_to_database(yaml_path, dry_run=args.dry_run, run_id=args.run_id)
+        sync_to_database(yaml_path, dry_run=args.dry_run, run_id=args.run_id, asset_id=args.asset_id)
         logger.info("✅ Persistence complete")
         return
     
@@ -688,7 +694,7 @@ def main():
             logger.info("\n[DRY RUN] Would sync to database...")
         else:
             if yaml_path:
-                sync_to_database(yaml_path, dry_run=False, run_id=args.run_id)
+                sync_to_database(yaml_path, dry_run=False, run_id=args.run_id, asset_id=args.asset_id)
             else:
                 logger.error("Cannot sync to database: no YAML path available")
     

@@ -26,7 +26,7 @@ from dagster_qbn.assets import (
     production_readiness,
     qbn_db_health_check,
     signal_classification,
-    signal_combinations,
+    combination_alpha,
     signal_weights,
     training_analysis,
 )
@@ -73,7 +73,7 @@ defs = Definitions(
         barrier_outcomes_leading,
         barrier_outcomes_weights,
         signal_weights,
-        signal_combinations,
+        combination_alpha,
         event_windows,
         position_delta_threshold_config,
         cpt_cache,

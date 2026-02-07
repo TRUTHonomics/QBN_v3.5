@@ -153,7 +153,7 @@ class InferenceLoader:
             weight
         FROM qbn.signal_weights
         WHERE (asset_id = %s OR asset_id = 0)
-        ORDER BY signal_name, horizon, asset_id DESC
+        ORDER BY signal_name, horizon, asset_id DESC, last_trained_at DESC
         """
         
         classification = {}

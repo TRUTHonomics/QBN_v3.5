@@ -6,10 +6,12 @@ Elk asset materialiseert een Postgres-tabel door het bijbehorende script uit te 
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from dagster import AssetKey, MetadataValue, SourceAsset, asset
@@ -406,11 +408,11 @@ def signal_weights(context) -> dict:
 
 
 @asset(
-    key=AssetKey(["qbn", "signal_combinations"]),
+    key=AssetKey(["qbn", "combination_alpha"]),
     deps=[AssetKey(["qbn", "barrier_outcomes"])],
     description="Signaalcombinatie analyse (OR-logica) - Golden Rule/Promising/Noise",
     metadata={
-        "table_name": "qbn.signal_combinations",
+        "table_name": "qbn.combination_alpha",
         "reads_from": ["qbn.barrier_outcomes", "qbn.signal_classification"],
         "gpu_required": True,
         "script": "scripts/run_combination_analysis.py",
@@ -424,12 +426,12 @@ def signal_weights(context) -> dict:
     },
     required_resource_keys={"postgres", "training_run_config"},
 )
-def signal_combinations(context) -> dict:
+def combination_alpha(context) -> dict:
     """
     Analyseert signaalcombinaties met bootstrap statistiek.
-    
+
     Script: scripts/run_combination_analysis.py
-    Output: qbn.signal_combinations + JSON reports
+    Output: qbn.combination_alpha + JSON reports
     """
     cfg = context.resources.training_run_config
 
@@ -646,22 +648,43 @@ def cpt_cache(context) -> dict:
 def training_analysis(context) -> dict:
     """
     Analyseert training run resultaten en genereert rapporten.
-    
+
     Script: analysis/pipeline_run_analyzer.py
     Output: _validation/{timestamp}-pipeline_analysis-asset_{id}-{run_id}/
     """
     cfg = context.resources.training_run_config
     run_id = _resolve_run_id(cfg)
-    
+
     context.log.info(f"Starting pipeline analysis for run_id={run_id}, asset={cfg.asset_id}")
-    
+
+    # Optioneel: Dagster terminal log voor handshake-detectie (bij runs via Dagster)
+    dagster_log = os.environ.get("DAGSTER_LOG_PATH")
+    if not dagster_log:
+        try:
+            tmp = Path("/tmp")
+            if tmp.exists():
+                for log_path in sorted(tmp.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
+                    try:
+                        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                            content = f.read(1000)
+                        if run_id in content and "dagster" in content.lower():
+                            dagster_log = str(log_path)
+                            break
+                    except Exception:
+                        continue
+        except Exception as e:
+            context.log.warning(f"Could not scan for Dagster terminal log: {e}")
+
     cmd = [
         "docker", "exec", "QBN_v4_Training",
         "python", "analysis/pipeline_run_analyzer.py",
         "--asset-id", str(cfg.asset_id),
-        "--run-id", run_id
+        "--run-id", run_id,
     ]
-    
+    if dagster_log:
+        cmd.extend(["--dagster-log", dagster_log])
+        context.log.info(f"Using Dagster log: {dagster_log}")
+
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=True)
     
     context.log.info("Pipeline analysis complete")

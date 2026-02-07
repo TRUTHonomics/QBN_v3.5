@@ -27,7 +27,7 @@ class TrainingRunConfig(ConfigurableResource):
 
     # === Data Window ===
     lookback_days: int = 365
-    """Aantal dagen training data. Gebruikt door: composite_threshold_config, signal_combinations, position_delta_threshold_config."""
+    """Aantal dagen training data. Gebruikt door: composite_threshold_config, combination_alpha, position_delta_threshold_config."""
 
     # === Barrier Backfill ===
     batch_size: int = 100000
@@ -62,10 +62,10 @@ class TrainingRunConfig(ConfigurableResource):
 
     # === Combination Analysis ===
     n_bootstrap: int = 1000
-    """Bootstrap iterations voor statistische significantie. Gebruikt door: signal_combinations."""
+    """Bootstrap iterations voor statistische significantie. Gebruikt door: combination_alpha."""
 
     use_gpu: bool = True
-    """GPU gebruiken voor combination analysis. Gebruikt door: signal_combinations."""
+    """GPU gebruiken voor combination analysis. Gebruikt door: combination_alpha."""
 
     # === Validation ===
     skip_benchmarks: bool = False

@@ -67,15 +67,24 @@ class StepSummary:
 class PipelineRunAnalyzer:
     """Analyseert een volledige pipeline run."""
     
-    def __init__(self, run_id: str, asset_id: int):
+    def __init__(self, run_id: str, asset_id: int, dagster_log_path: Optional[str] = None):
         self.run_id = run_id
         self.asset_id = asset_id
         self.base_dir = Path(__file__).parent.parent
         self.log_dir = self.base_dir / "_log"
         self.validation_dir = self.base_dir / "_validation"
-        
-    def scan_logs_for_handshakes(self) -> List[HandshakeLog]:
-        """Scant alle logs voor HANDSHAKE_IN/OUT entries."""
+        self.dagster_log_path = Path(dagster_log_path) if dagster_log_path else None
+
+    def scan_dagster_log_for_handshakes(self) -> List[HandshakeLog]:
+        """
+        Scant Dagster STDOUT log voor HANDSHAKE_IN/OUT entries.
+
+        Dagster logt handshakes naar STDOUT/STDERR wanneer scripts draaien via Dagster.
+        Deze logs staan niet in _log/*.log maar in de Dagster terminal output.
+        """
+        if not self.dagster_log_path or not self.dagster_log_path.exists():
+            return []
+
         handshakes = []
         pattern = re.compile(
             r'HANDSHAKE_(IN|OUT) \| '
@@ -86,26 +95,72 @@ class PipelineRunAnalyzer:
             r'(?:\s*\|\s*filter=(\S+))?'
             r'(?:\s*\|\s*operation=(\S+))?'
         )
-        
-        # Scan _log directory
+
+        try:
+            with open(self.dagster_log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    if self.run_id not in line:
+                        continue
+
+                    # Skip duplicate INFO log entries (keep only the first occurrence)
+                    if 'INFO:core.step_validation:HANDSHAKE' in line:
+                        continue
+
+                    match = pattern.search(line)
+                    if match:
+                        direction, step, run_id, table, rows, filter_clause, operation = match.groups()
+
+                        # Extract timestamp from Dagster log format
+                        timestamp_match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
+                        timestamp = timestamp_match.group(1) if timestamp_match else None
+
+                        handshakes.append(HandshakeLog(
+                            direction=direction,
+                            step=step,
+                            run_id=run_id,
+                            table=table,
+                            rows=int(rows),
+                            filter=filter_clause if filter_clause and filter_clause != 'none' else None,
+                            operation=operation,
+                            timestamp=timestamp,
+                            log_file="dagster_stdout"
+                        ))
+        except Exception as e:
+            logger.warning(f"Error scanning Dagster log {self.dagster_log_path}: {e}")
+
+        return sorted(handshakes, key=lambda x: (x.timestamp or '', x.step))
+
+    def scan_logs_for_handshakes(self) -> List[HandshakeLog]:
+        """Scant alle logs (file logs + Dagster STDOUT) voor HANDSHAKE_IN/OUT entries."""
+        handshakes = []
+        pattern = re.compile(
+            r'HANDSHAKE_(IN|OUT) \| '
+            r'step=(\S+) \| '
+            r'run_id=(\S+) \| '
+            r'(?:source|target)=(\S+) \| '
+            r'rows=(\d+)'
+            r'(?:\s*\|\s*filter=(\S+))?'
+            r'(?:\s*\|\s*operation=(\S+))?'
+        )
+
+        # 1. Scan _log directory (individuele script runs)
         log_files = list(self.log_dir.glob("*.log"))
         log_files.extend(self.log_dir.glob("archive/*.log"))
-        
+
         for log_file in log_files:
             try:
                 with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-                    for line_num, line in enumerate(f, 1):
+                    for line in f:
                         if self.run_id not in line:
                             continue
-                        
+
                         match = pattern.search(line)
                         if match:
                             direction, step, run_id, table, rows, filter_clause, operation = match.groups()
-                            
-                            # Extract timestamp from line (format: YYYY-MM-DD HH:MM:SS)
+
                             timestamp_match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
                             timestamp = timestamp_match.group(1) if timestamp_match else None
-                            
+
                             handshakes.append(HandshakeLog(
                                 direction=direction,
                                 step=step,
@@ -119,8 +174,19 @@ class PipelineRunAnalyzer:
                             ))
             except Exception as e:
                 logger.warning(f"Error scanning {log_file}: {e}")
-        
-        return sorted(handshakes, key=lambda x: (x.timestamp or '', x.step))
+
+        # 2. Scan Dagster STDOUT log (indien beschikbaar)
+        dagster_handshakes = self.scan_dagster_log_for_handshakes()
+        handshakes.extend(dagster_handshakes)
+
+        # 3. Dedupliceer (sommige handshakes komen voor in beide sources)
+        unique_handshakes = {}
+        for h in handshakes:
+            key = (h.direction, h.step, h.table, h.rows)
+            if key not in unique_handshakes:
+                unique_handshakes[key] = h
+
+        return sorted(unique_handshakes.values(), key=lambda x: (x.timestamp or '', x.step))
     
     def scan_logs_for_errors_warnings(self) -> Dict[str, List[str]]:
         """Scant logs voor ERROR en WARNING entries."""
@@ -146,12 +212,22 @@ class PipelineRunAnalyzer:
         return issues
     
     def get_database_stats(self) -> Dict[str, int]:
-        """Haalt row counts op voor alle relevante tabellen met run_id."""
-        tables = [
-            "qbn.composite_threshold_config",
+        """
+        Haalt row counts op voor alle relevante tabellen.
+        
+        REASON: Universele tabellen (barrier_outcomes) worden niet gefilterd op run_id,
+        run-scoped tabellen wel. Dit voorkomt misleidende "0 rows" rapportage.
+        """
+        # Universele tabellen (deterministic from market data, geen run_id scoping)
+        universal_tables = [
             "qbn.barrier_outcomes",
+        ]
+        
+        # Run-scoped tabellen (houden meerdere runs bij)
+        run_scoped_tables = [
+            "qbn.composite_threshold_config",
             "qbn.signal_weights",
-            "qbn.signal_combinations",
+            "qbn.combination_alpha",
             "qbn.event_windows",
             "qbn.position_delta_threshold_config",
             "qbn.cpt_cache",
@@ -159,19 +235,29 @@ class PipelineRunAnalyzer:
         
         stats = {}
         with get_cursor() as cur:
-            for table in tables:
+            # Query universal tables zonder run_id filter
+            for table in universal_tables:
                 try:
-                    # Check if table has run_id column
+                    cur.execute(f"SELECT COUNT(*) FROM {table} WHERE asset_id = %s", (self.asset_id,))
+                    count = cur.fetchone()[0]
+                    stats[f"{table} (universal)"] = count
+                except Exception as e:
+                    logger.warning(f"Could not query {table}: {e}")
+                    stats[f"{table} (universal)"] = -1
+            
+            # Query run-scoped tables met run_id filter
+            for table in run_scoped_tables:
+                try:
                     cur.execute(f"""
                         SELECT COUNT(*) 
                         FROM {table} 
                         WHERE asset_id = %s AND run_id = %s
                     """, (self.asset_id, self.run_id))
                     count = cur.fetchone()[0]
-                    stats[table] = count
+                    stats[f"{table} (run {self.run_id[:8]})"] = count
                 except Exception as e:
                     logger.warning(f"Could not query {table}: {e}")
-                    stats[table] = -1  # Indicate error
+                    stats[f"{table} (run {self.run_id[:8]})"] = -1
         
         return stats
     
@@ -221,7 +307,7 @@ class PipelineRunAnalyzer:
             (3, "barrier_outcomes_leading", "scripts/materialize_leading_scores.py"),
             (4, "barrier_outcomes_weights", "scripts/compute_barrier_weights.py"),
             (5, "signal_weights", "alpha-analysis/analyze_signal_alpha.py"),
-            (6, "signal_combinations", "scripts/run_combination_analysis.py"),
+            (6, "combination_alpha", "scripts/run_combination_analysis.py"),
             (7, "event_windows", "scripts/run_event_window_detection.py"),
             (8, "position_delta_threshold_config", "scripts/run_position_delta_threshold_analysis.py"),
             (9, "cpt_cache", "inference/qbn_v3_cpt_generator.py"),
@@ -455,8 +541,13 @@ def main():
     )
     parser.add_argument("--run-id", type=str, help="Specifieke run_id om te analyseren")
     parser.add_argument("--asset-id", type=int, required=True, help="Asset ID")
+    parser.add_argument(
+        "--dagster-log",
+        type=str,
+        help="Path to Dagster terminal/STDOUT log file (for handshake detection in Dagster runs)",
+    )
     parser.add_argument("--latest", action="store_true", help="Analyseer laatste run voor dit asset")
-    
+
     args = parser.parse_args()
     
     if not args.run_id and not args.latest:
@@ -466,7 +557,11 @@ def main():
         # TODO: Query database voor laatste run_id van dit asset
         raise NotImplementedError("--latest not yet implemented")
     
-    analyzer = PipelineRunAnalyzer(run_id=args.run_id, asset_id=args.asset_id)
+    analyzer = PipelineRunAnalyzer(
+        run_id=args.run_id,
+        asset_id=args.asset_id,
+        dagster_log_path=args.dagster_log,
+    )
     output_dir = analyzer.analyze()
     
     print(f"\n✅ Analysis complete!")

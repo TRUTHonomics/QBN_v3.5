@@ -579,6 +579,7 @@ class CombinationAlphaAnalyzer:
         
         # HANDSHAKE_OUT logging
         from core.step_validation import log_handshake_out
+        from core.run_retention import retain_recent_runs_auto
         log_handshake_out(
             step="run_combination_analysis",
             target="qbn.combination_alpha",
@@ -586,6 +587,12 @@ class CombinationAlphaAnalyzer:
             rows=saved_count,
             operation="INSERT"
         )
+        
+        # Retentie: bewaar 3 meest recente runs
+        if self.run_id:
+            from database.db import get_cursor
+            with get_cursor() as cur:
+                retain_recent_runs_auto(cur.connection, "qbn.combination_alpha", self.asset_id)
         
         return saved_count
     

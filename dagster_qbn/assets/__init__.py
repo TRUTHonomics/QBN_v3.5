@@ -12,7 +12,7 @@ from .tables import (
     kfl_mtf_signals_coin,
     kfl_mtf_signals_conf,
     position_delta_threshold_config,
-    signal_combinations,
+    combination_alpha,
     signal_weights,
     training_analysis,
 )
@@ -41,7 +41,7 @@ __all__ = [
     "barrier_outcomes_leading",
     "barrier_outcomes_weights",
     "signal_weights",
-    "signal_combinations",
+    "combination_alpha",
     "event_windows",
     "position_delta_threshold_config",
     "cpt_cache",

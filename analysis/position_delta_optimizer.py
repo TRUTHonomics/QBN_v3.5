@@ -719,13 +719,12 @@ class PositionDeltaThresholdOptimizer:
                     INSERT INTO qbn.position_delta_threshold_config 
                         (asset_id, delta_type, score_type, threshold, mi_score, distribution, source_method, run_id)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (asset_id, delta_type, score_type) 
+                    ON CONFLICT (asset_id, delta_type, score_type, run_id) 
                     DO UPDATE SET 
                         threshold = EXCLUDED.threshold,
                         mi_score = EXCLUDED.mi_score,
                         distribution = EXCLUDED.distribution,
                         source_method = EXCLUDED.source_method,
-                        run_id = EXCLUDED.run_id,
                         updated_at = NOW()
                 """, (
                     self.asset_id,
@@ -742,6 +741,7 @@ class PositionDeltaThresholdOptimizer:
         
         # HANDSHAKE_OUT logging
         from core.step_validation import log_handshake_out
+        from core.run_retention import retain_recent_runs_auto
         log_handshake_out(
             step="run_position_delta_threshold_analysis",
             target="qbn.position_delta_threshold_config",
@@ -749,6 +749,11 @@ class PositionDeltaThresholdOptimizer:
             rows=len(results),
             operation="INSERT"
         )
+        
+        # Retentie: bewaar 3 meest recente runs
+        if run_id:
+            with get_cursor(commit=False) as cur:
+                retain_recent_runs_auto(cur.connection, "qbn.position_delta_threshold_config", self.asset_id)
     
     def _generate_report(self, results: Dict[str, DeltaThresholdResult]):
         """Genereer markdown report."""
