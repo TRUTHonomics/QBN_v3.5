@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from dagster import AssetKey, MetadataValue, asset
+from dagster import AssetKey, AutoMaterializePolicy, MetadataValue, asset
 
 
 # ============================================================================
@@ -43,8 +43,17 @@ def _run_validation_script(
         f"/app/{script_path}",
     ]
 
-    if extra_args:
-        cmd.extend(extra_args)
+    args = list(extra_args or [])
+    # Auto-inject --run-id vanuit training_run_config (zoals _run_training_script)
+    if "--run-id" not in args:
+        try:
+            run_id = context.resources.training_run_config.run_id
+            if run_id:
+                args.extend(["--run-id", run_id])
+        except Exception:
+            pass  # Resource niet beschikbaar (standalone)
+
+    cmd.extend(args)
 
     context.log.info(f"Executing: {' '.join(cmd)}")
 
@@ -92,6 +101,7 @@ def _run_validation_script(
         "output": "report",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def barrier_status(context) -> dict:
     """
@@ -129,6 +139,7 @@ def barrier_status(context) -> dict:
         "output": "report",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def signal_classification(context) -> dict:
     """
@@ -161,6 +172,7 @@ def signal_classification(context) -> dict:
         "output": "report",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def ida_weights(context) -> dict:
     """
@@ -185,10 +197,14 @@ def ida_weights(context) -> dict:
 
 @asset(
     key=AssetKey(["validation", "cpt_health"]),
-    deps=[AssetKey(["qbn", "cpt_cache"])],
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "cpt_cache_entry"]),
+        AssetKey(["qbn", "cpt_cache_position"]),
+    ],
     description="CPT health report (entropy, coverage, staleness)",
     metadata={
-        "reads_from": ["qbn.cpt_cache"],
+        "reads_from": ["qbn.cpt_cache_structural", "qbn.cpt_cache_entry", "qbn.cpt_cache_position"],
         "output_type": "rapport",
         "script": "validation/cpt_validator.py",
     },
@@ -198,6 +214,7 @@ def ida_weights(context) -> dict:
         "output": "report",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def cpt_health(context) -> dict:
     """
@@ -250,10 +267,14 @@ def cpt_health(context) -> dict:
 
 @asset(
     key=AssetKey(["validation", "node_diagnostics"]),
-    deps=[AssetKey(["qbn", "cpt_cache"])],
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "cpt_cache_entry"]),
+        AssetKey(["qbn", "cpt_cache_position"]),
+    ],
     description="Node-level diagnostics voor individuele BN nodes",
     metadata={
-        "reads_from": ["qbn.cpt_cache", "qbn.barrier_outcomes"],
+        "reads_from": ["qbn.cpt_cache_structural", "qbn.cpt_cache_entry", "qbn.cpt_cache_position", "qbn.barrier_outcomes"],
         "output_type": "rapport",
         "script": "validation/node_diagnostics.py",
     },
@@ -263,6 +284,7 @@ def cpt_health(context) -> dict:
         "output": "report",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def node_diagnostics(context) -> dict:
     """
@@ -282,11 +304,12 @@ def node_diagnostics(context) -> dict:
         f"from validation.node_diagnostics import NodeDiagnosticValidator; "
         f"from validation.node_diagnostic_report import generate_markdown_report; "
         f"from pathlib import Path; "
-        f"v = NodeDiagnosticValidator(asset_id={cfg.asset_id}, run_id=None); "
+        f"v = NodeDiagnosticValidator(asset_id={cfg.asset_id}, run_id={repr(cfg.run_id)}); "
         f"results = v.run_full_diagnostic(days=3650); "
         f"report_dir = Path('/app/_validation') / f'asset_{cfg.asset_id}' / '12_node-level_diagnostics'; "
         f"report_dir.mkdir(parents=True, exist_ok=True); "
-        f"generate_markdown_report({cfg.asset_id}, results, output_dir=report_dir) if results else None",
+        f"report_path = generate_markdown_report({cfg.asset_id}, results, report_dir) if results else None; "
+        f"print(f'Node diagnostics rapport gegenereerd: {{report_path}}') if report_path else print('Geen resultaten om rapport te genereren')",
     ]
 
     context.log.info(f"Executing: {' '.join(cmd[:4])} [python -c ...]")
@@ -316,10 +339,15 @@ def node_diagnostics(context) -> dict:
 
 @asset(
     key=AssetKey(["validation", "backtest"]),
-    deps=[AssetKey(["qbn", "cpt_cache"]), AssetKey(["qbn", "barrier_outcomes"])],
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "cpt_cache_entry"]),
+        AssetKey(["qbn", "cpt_cache_position"]),
+        AssetKey(["qbn", "barrier_outcomes"]),
+    ],
     description="Walk-forward backtest met P&L metrics",
     metadata={
-        "reads_from": ["qbn.cpt_cache", "qbn.barrier_outcomes"],
+        "reads_from": ["qbn.cpt_cache_structural", "qbn.cpt_cache_entry", "qbn.cpt_cache_position", "qbn.barrier_outcomes"],
         "output_type": "rapport",
         "script": "scripts/run_backtest_validation.py",
     },
@@ -329,6 +357,7 @@ def node_diagnostics(context) -> dict:
         "output": "report_and_db",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def backtest(context) -> dict:
     """
@@ -359,10 +388,15 @@ def backtest(context) -> dict:
 
 @asset(
     key=AssetKey(["validation", "prediction_accuracy"]),
-    deps=[AssetKey(["qbn", "cpt_cache"]), AssetKey(["qbn", "barrier_outcomes"])],
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "cpt_cache_entry"]),
+        AssetKey(["qbn", "cpt_cache_position"]),
+        AssetKey(["qbn", "barrier_outcomes"]),
+    ],
     description="Entry en Position prediction accuracy reports",
     metadata={
-        "reads_from": ["qbn.output_entry", "qbn.barrier_outcomes", "qbn.cpt_cache"],
+        "reads_from": ["qbn.output_entry", "qbn.barrier_outcomes", "qbn.cpt_cache_structural", "qbn.cpt_cache_entry", "qbn.cpt_cache_position"],
         "output_type": "rapport",
         "script": "validation scripts",
     },
@@ -372,28 +406,164 @@ def backtest(context) -> dict:
         "output": "report",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def prediction_accuracy(context) -> dict:
     """
     Entry en Position prediction accuracy validatie.
     
+    Script: scripts/run_prediction_accuracy.py
     Output: _validation/prediction_accuracy_*.md
     """
     cfg = context.resources.training_run_config
 
-    # REASON: Combinatie van entry + position accuracy checks
-    cmd = [
-        "docker",
-        "exec",
-        "QBN_v4_Training",
-        "python",
-        "-c",
-        f"import sys; "
-        f"print('Entry+Position accuracy checks voor asset {cfg.asset_id}'); "
-        f"print('TODO: Implement via validation scripts')",
+    args = [
+        "--asset-id", str(cfg.asset_id),
+        "--lookback-days", "30",
+        "--min-samples", "50",
     ]
 
-    context.log.info(f"Executing prediction accuracy checks for asset {cfg.asset_id}")
+    result = _run_validation_script("scripts/run_prediction_accuracy.py", context, args)
+
+    context.add_output_metadata({
+        "asset_id": MetadataValue.int(cfg.asset_id),
+        "execution_time_sec": MetadataValue.float(result["elapsed_time_sec"]),
+    })
+
+    return result
+
+
+@asset(
+    key=AssetKey(["validation", "cpt_stability"]),
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "cpt_cache_entry"]),
+        AssetKey(["qbn", "cpt_cache_position"]),
+    ],
+    description="CPT stability validatie (drift detectie via halve-lookback vergelijking)",
+    metadata={
+        "reads_from": ["qbn.cpt_cache_structural", "qbn.cpt_cache_entry", "qbn.cpt_cache_position"],
+        "output_type": "rapport",
+    },
+    tags={"schema": "qbn", "category": "bn_brain_health", "output": "report"},
+    required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
+)
+def cpt_stability(context) -> dict:
+    """
+    Valideert CPT stability door huidige CPTs te vergelijken met vers gegenereerde CPTs op halve lookback.
+    
+    Script: inference/qbn_v3_cpt_generator.py:validate_existing_cpts()
+    Output: Stability scores per node
+    """
+    cfg = context.resources.training_run_config
+    
+    cmd = [
+        "docker", "exec", "QBN_v4_Training", "python", "-c",
+        f"from inference.qbn_v3_cpt_generator import QBNv3CPTGenerator; "
+        f"g = QBNv3CPTGenerator(); "
+        f"results = g.validate_existing_cpts(asset_id={cfg.asset_id}, lookback_days={cfg.validation_lookback_days}); "
+        f"import json; "
+        f"stability_scores = {{k: v.get('stability_score', 0) for k, v in results.items()}}; "
+        f"print(json.dumps(stability_scores, indent=2)); "
+        f"avg_stability = sum(stability_scores.values()) / len(stability_scores) if stability_scores else 0; "
+        f"print(f'\\nAverage Stability: {{avg_stability:.3f}}'); "
+        f"low_stability = [k for k, v in stability_scores.items() if v < 0.7]; "
+        f"print(f'Low Stability Nodes (<0.7): {{len(low_stability)}}') if low_stability else print('All nodes stable')",
+    ]
+
+    context.log.info(f"Executing: {' '.join(cmd[:4])} [python -c ...]")
+
+    start = time.time()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    elapsed = time.time() - start
+
+    if result.stdout:
+        context.log.info(f"STDOUT:\n{result.stdout}")
+    if result.stderr and result.returncode != 0:
+        context.log.warning(f"STDERR:\n{result.stderr}")
+
+    if result.returncode != 0:
+        raise RuntimeError(f"CPT stability check failed with exit code {result.returncode}")
+
+    context.add_output_metadata({
+        "asset_id": MetadataValue.int(cfg.asset_id),
+        "execution_time_sec": MetadataValue.float(elapsed),
+    })
+
+    return {
+        "returncode": result.returncode,
+        "elapsed_time_sec": elapsed,
+    }
+
+
+@asset(
+    key=AssetKey(["validation", "position_prediction_accuracy"]),
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "cpt_cache_entry"]),
+        AssetKey(["qbn", "cpt_cache_position"]),
+        AssetKey(["qbn", "barrier_outcomes"]),
+    ],
+    description="Position prediction accuracy via event-driven replay",
+    metadata={
+        "reads_from": ["qbn.cpt_cache_*", "qbn.barrier_outcomes"],
+        "output_type": "rapport",
+        "script": "scripts/validate_position_management.py",
+    },
+    tags={"schema": "qbn", "category": "performance", "output": "report"},
+    required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
+)
+def position_prediction_accuracy(context) -> dict:
+    """
+    Position prediction accuracy via event-driven replay.
+    
+    Script: scripts/validate_position_management.py
+    Output: _validation/asset_X/position_management_*.md
+    """
+    cfg = context.resources.training_run_config
+    args = ["--asset-id", str(cfg.asset_id)]
+    # --run-id wordt automatisch geïnjecteerd door _run_validation_script (Deelplan 1 fix)
+    result = _run_validation_script("scripts/validate_position_management.py", context, args)
+    
+    context.add_output_metadata({
+        "asset_id": MetadataValue.int(cfg.asset_id),
+        "execution_time_sec": MetadataValue.float(result["elapsed_time_sec"]),
+    })
+    
+    return result
+
+
+@asset(
+    key=AssetKey(["validation", "entry_position_correlation"]),
+    deps=[AssetKey(["validation", "backtest"])],
+    description="Entry quality vs position outcome correlatie",
+    metadata={
+        "reads_from": ["qbn.backtest_trades", "qbn.backtest_runs"],
+        "output_type": "rapport",
+    },
+    tags={"schema": "qbn", "category": "performance", "output": "report"},
+    required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
+)
+def entry_position_correlation(context) -> dict:
+    """
+    Entry quality vs position outcome correlatie-analyse.
+    
+    Script: validation/entry_position_correlation.py
+    Output: Console rapport met correlatie metrics
+    """
+    cfg = context.resources.training_run_config
+    
+    cmd = [
+        "docker", "exec", "QBN_v4_Training", "python", "-c",
+        f"from validation.entry_position_correlation import analyze_entry_position_correlation; "
+        f"results = analyze_entry_position_correlation(asset_id={cfg.asset_id}); "
+        f"print('\\n'.join(results.get('report_lines', []))) if results else print('No backtest data found')",
+    ]
+
+    context.log.info(f"Executing: {' '.join(cmd[:4])} [python -c ...]")
 
     start = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -401,6 +571,11 @@ def prediction_accuracy(context) -> dict:
 
     if result.stdout:
         context.log.info(f"STDOUT:\n{result.stdout}")
+    if result.stderr and result.returncode != 0:
+        context.log.warning(f"STDERR:\n{result.stderr}")
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Entry-position correlation analysis failed with exit code {result.returncode}")
 
     context.add_output_metadata({
         "asset_id": MetadataValue.int(cfg.asset_id),
@@ -422,6 +597,9 @@ def prediction_accuracy(context) -> dict:
         AssetKey(["validation", "node_diagnostics"]),
         AssetKey(["validation", "backtest"]),
         AssetKey(["validation", "prediction_accuracy"]),
+        AssetKey(["validation", "cpt_stability"]),
+        AssetKey(["validation", "position_prediction_accuracy"]),
+        AssetKey(["validation", "entry_position_correlation"]),
     ],
     description="GO/NO-GO verdict voor production inference - finale gate",
     metadata={
@@ -441,6 +619,7 @@ def prediction_accuracy(context) -> dict:
         "output": "verdict",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def production_readiness(context) -> dict:
     """
@@ -458,7 +637,7 @@ def production_readiness(context) -> dict:
         "python",
         "-c",
         f"from validation.production_readiness import ProductionReadinessValidator; "
-        f"v = ProductionReadinessValidator(asset_id={cfg.asset_id}, run_id='{cfg.run_id or ''}'); "
+        f"v = ProductionReadinessValidator(asset_id={cfg.asset_id}, run_id={repr(cfg.run_id)}); "
         f"verdict, results = v.run_all_checks(); "
         f"print(f'VERDICT: {{verdict}}'); "
         f"[print(f'{{r.name}}: {{r.status}} - {{r.message}}') for r in results]",

@@ -434,11 +434,11 @@ class GPUCombinationDataLoader:
         xp = self.xp
         
         # REASON: Convert timestamps to int64 for comparison.
-        # .to_numpy().view('int64') werkt voor zowel DatetimeArray als numpy.ndarray.
-        times_lead = df_lead['time_1'].to_numpy().view('int64')
-        times_coin = df_coin['time_1'].to_numpy().view('int64')
-        times_conf = df_conf['time_1'].to_numpy().view('int64')
-        times_out = df_outcomes['time_1'].to_numpy().view('int64')
+        # .values.view('int64') werkt met pandas 2.0+ DatetimeTZDtype arrays.
+        times_lead = df_lead['time_1'].values.view('int64')
+        times_coin = df_coin['time_1'].values.view('int64')
+        times_conf = df_conf['time_1'].values.view('int64')
+        times_out = df_outcomes['time_1'].values.view('int64')
         
         if self.use_gpu:
             result = self._merge_gpu(

@@ -66,7 +66,10 @@ TIMESTAMP_COLUMNS = {
     "qbn.combination_alpha": "analyzed_at",
     "qbn.event_windows": "created_at",
     "qbn.position_delta_threshold_config": "updated_at",
-    "qbn.cpt_cache": "generated_at",
+    "qbn.cpt_cache": "generated_at",  # DEPRECATED v3.4: legacy table
+    "qbn.cpt_cache_structural": "generated_at",
+    "qbn.cpt_cache_entry": "generated_at",
+    "qbn.cpt_cache_position": "generated_at",
 }
 
 

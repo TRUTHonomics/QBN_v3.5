@@ -230,7 +230,10 @@ class PipelineRunAnalyzer:
             "qbn.combination_alpha",
             "qbn.event_windows",
             "qbn.position_delta_threshold_config",
-            "qbn.cpt_cache",
+            "qbn.cpt_cache",  # DEPRECATED v3.4: legacy table
+            "qbn.cpt_cache_structural",
+            "qbn.cpt_cache_entry",
+            "qbn.cpt_cache_position",
         ]
         
         stats = {}
@@ -301,6 +304,7 @@ class PipelineRunAnalyzer:
     def generate_step_summaries(self, handshakes: List[HandshakeLog]) -> List[StepSummary]:
         """Genereert samenvatting per pipeline stap."""
         # Pipeline stappen definitie (van eerdere analyse)
+        # v3.4: CPT generatie nu gesplit in 3 stappen
         pipeline_steps = [
             (1, "composite_threshold_config", "scripts/run_threshold_analysis.py"),
             (2, "barrier_outcomes", "scripts/barrier_backfill.py"),
@@ -310,7 +314,9 @@ class PipelineRunAnalyzer:
             (6, "combination_alpha", "scripts/run_combination_analysis.py"),
             (7, "event_windows", "scripts/run_event_window_detection.py"),
             (8, "position_delta_threshold_config", "scripts/run_position_delta_threshold_analysis.py"),
-            (9, "cpt_cache", "inference/qbn_v3_cpt_generator.py"),
+            (9, "cpt_cache_structural", "inference/qbn_v3_cpt_generator.py"),
+            (10, "cpt_cache_entry", "inference/qbn_v3_cpt_generator.py"),
+            (11, "cpt_cache_position", "inference/qbn_v3_cpt_generator.py"),
         ]
         
         summaries = []

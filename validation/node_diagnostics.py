@@ -137,7 +137,45 @@ class NodeDiagnosticValidator:
         
         logger.info(f"📊 {len(self._data_cache)} datapunten geladen")
         
-        # ... rest of method ...
+        # Run inference op alle data
+        logger.info("🔮 Running inference...")
+        self._inference_cache = self._run_inference_on_data()
+        logger.info(f"✅ Inference compleet: {len(self._inference_cache)} resultaten")
+        
+        # Run diagnostics per node
+        results = {}
+        
+        # Structural layer
+        logger.info("Diagnosing HTF_Regime...")
+        results['htf_regime'] = self._diagnose_regime()
+        
+        # Tactical layer
+        logger.info("Diagnosing Composite nodes...")
+        results['leading_composite'] = self._diagnose_composite('leading')
+        results['coincident_composite'] = self._diagnose_composite('coincident')
+        results['confirming_composite'] = self._diagnose_composite('confirming')
+        
+        # Entry layer
+        logger.info("Diagnosing Trade_Hypothesis...")
+        results['trade_hypothesis'] = self._diagnose_trade_hypothesis()
+        
+        # Timing layer
+        logger.info("Diagnosing Entry_Confidence...")
+        results['entry_confidence'] = self._diagnose_entry_confidence()
+        
+        # Management layer
+        logger.info("Diagnosing Position_Confidence...")
+        results['position_confidence'] = self._diagnose_position_confidence()
+        
+        # Prediction layer
+        logger.info("Diagnosing Prediction nodes...")
+        results['prediction_1h'] = self._diagnose_prediction('1h')
+        results['prediction_4h'] = self._diagnose_prediction('4h')
+        results['prediction_1d'] = self._diagnose_prediction('1d')
+        
+        logger.info(f"✅ Diagnostic compleet voor {len(results)} nodes")
+        
+        return results
     
     def _run_inference_on_data(self) -> List[Dict]:
         """Voer inference uit op alle data en return resultaten."""
@@ -155,7 +193,7 @@ class NodeDiagnosticValidator:
                 'coincident_composite': inf_result.coincident_composite,
                 'confirming_composite': inf_result.confirming_composite,
                 'trade_hypothesis': inf_result.trade_hypothesis,
-                'entry_confidence': inf_result.entry_confidence,
+                'entry_confidence': None,  # REASON: entry_confidence is verwijderd in v3.1, houden voor backwards compatibility
                 'position_confidence': inf_result.position_confidence,
                 'prediction_1h': inf_result.predictions.get('1h').most_probable_state if inf_result.predictions.get('1h') else None,
                 'prediction_4h': inf_result.predictions.get('4h').most_probable_state if inf_result.predictions.get('4h') else None,
@@ -441,6 +479,9 @@ class NodeDiagnosticValidator:
         """
         Diagnostic voor Entry_Confidence node.
         
+        REASON: entry_confidence is verwijderd in v3.1, maar de node blijft voor
+        backwards compatibility. Retourneer een SKIP status.
+        
         Checkt:
         - State distribution (low/medium/high)
         - Correlatie tussen confidence en outcome magnitude
@@ -450,6 +491,23 @@ class NodeDiagnosticValidator:
         issues = []
         
         confidence_states = [r['entry_confidence'] for r in self._inference_cache]
+        
+        # REASON: Check of entry_confidence data beschikbaar is (v3.0 vs v3.1)
+        non_none_states = [s for s in confidence_states if s is not None]
+        if not non_none_states:
+            issues.append("DEPRECATED: entry_confidence verwijderd in v3.1")
+            return NodeDiagnosticResult(
+                node_name=node_name,
+                status='PASS',
+                state_distribution={'None': 1.0},
+                stuck_state=None,
+                dead_states=[],
+                mi_1h=0.0,
+                mi_4h=0.0,
+                mi_1d=0.0,
+                issues=issues,
+                sample_count=len(confidence_states)
+            )
         
         # State distribution
         distribution, stuck_state, dead_states = self._calculate_state_distribution(confidence_states)

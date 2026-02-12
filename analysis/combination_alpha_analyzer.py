@@ -592,7 +592,7 @@ class CombinationAlphaAnalyzer:
         if self.run_id:
             from database.db import get_cursor
             with get_cursor() as cur:
-                retain_recent_runs_auto(cur.connection, "qbn.combination_alpha", self.asset_id)
+                retain_recent_runs_auto(cur.connection, "qbn.combination_alpha", result.asset_id)
         
         return saved_count
     

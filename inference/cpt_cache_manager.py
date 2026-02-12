@@ -19,6 +19,27 @@ from config.network_config import FRESHNESS_THRESHOLD_HOURS, MODEL_VERSION
 
 logger = logging.getLogger(__name__)
 
+# REASON: Node-to-table routing per QBN v3.4 architecture (260124_QBN_v3.4_node_structure.md)
+NODE_TABLE_MAP = {
+    # Structural nodes
+    'HTF_Regime': 'qbn.cpt_cache_structural',
+    # Entry-side nodes
+    'Leading_Composite': 'qbn.cpt_cache_entry',
+    'Coincident_Composite': 'qbn.cpt_cache_entry',
+    'Confirming_Composite': 'qbn.cpt_cache_entry',
+    'Trade_Hypothesis': 'qbn.cpt_cache_entry',
+    'Prediction_1h': 'qbn.cpt_cache_entry',
+    'Prediction_4h': 'qbn.cpt_cache_entry',
+    'Prediction_1d': 'qbn.cpt_cache_entry',
+    # Position-side nodes
+    'Momentum_Prediction': 'qbn.cpt_cache_position',
+    'Volatility_Regime': 'qbn.cpt_cache_position',
+    'Exit_Timing': 'qbn.cpt_cache_position',
+    'Position_Prediction': 'qbn.cpt_cache_position',
+    # Legacy v3.2 node (nog gebruikt door fallback/composite flows)
+    'Position_Confidence': 'qbn.cpt_cache_position',
+}
+
 class CPTCacheManager:
     """
     Manages CPT caching with freshness tracking and multi-asset support.
@@ -54,6 +75,9 @@ class CPTCacheManager:
         else:
             search_mode = outcome_mode
 
+        # REASON: Bepaal de juiste tabel op basis van node_name (v3.4 routing)
+        table_name = NODE_TABLE_MAP.get(node_name, 'qbn.cpt_cache')
+        
         # Bepaal zoekcriteria: scope_key heeft voorrang, anders asset_id
         if scope_key:
             where_clause = "WHERE scope_key = %s"
@@ -64,7 +88,7 @@ class CPTCacheManager:
 
         query = f"""
         SELECT cpt_data, generated_at, last_used, run_id
-        FROM qbn.cpt_cache
+        FROM {table_name}
         {where_clause}
           AND node_name = %s
           AND model_version = %s
@@ -176,8 +200,11 @@ class CPTCacheManager:
         stability_score = float(validation.get('stability_score')) if validation.get('stability_score') is not None else None
         semantic_score = float(validation.get('semantic_score')) if validation.get('semantic_score') is not None else None
 
-        query = """
-        INSERT INTO qbn.cpt_cache (
+        # REASON: Bepaal de juiste tabel op basis van node_name (v3.4 routing)
+        table_name = NODE_TABLE_MAP.get(node_name, 'qbn.cpt_cache')
+
+        query = f"""
+        INSERT INTO {table_name} (
             asset_id, node_name, model_version, cpt_scope, cpt_data,
             generated_at, last_used, state_reduction, coverage, sparse_cells, observations,
             entropy, info_gain, stability_score, semantic_score,
@@ -215,7 +242,7 @@ class CPTCacheManager:
             # Retentie: bewaar 3 meest recente runs (alleen voor asset-specifieke CPTs)
             if run_id and asset_id > 0:
                 from core.run_retention import retain_recent_runs_auto
-                retain_recent_runs_auto(cur.connection, "qbn.cpt_cache", asset_id)
+                retain_recent_runs_auto(cur.connection, table_name, asset_id)
 
         # REASON: Vermeld mode alleen indien relevant (conform gebruikerswens)
         mode_str = f", mode={save_mode}" if save_mode != 'not_applicable' else ""
@@ -270,8 +297,11 @@ class CPTCacheManager:
 
     def _update_last_used(self, asset_id: int, node_name: str, run_id: Optional[str] = None):
         """Update last_used timestamp."""
-        query = """
-        UPDATE qbn.cpt_cache
+        # REASON: Gebruik dezelfde tabel routing als get_cpt/save_cpt
+        table_name = NODE_TABLE_MAP.get(node_name, 'qbn.cpt_cache')
+        
+        query = f"""
+        UPDATE {table_name}
         SET last_used = NOW()
         WHERE asset_id = %s AND node_name = %s AND model_version = %s
         """
@@ -287,20 +317,26 @@ class CPTCacheManager:
     def get_stale_cpts(self, age_threshold_hours: int = FRESHNESS_THRESHOLD_HOURS) -> List[Tuple[int, str]]:
         """
         Vind alle stale CPT's (>threshold hours old).
+        REASON: Query alle 3 CPT tabellen (v3.4 split).
         """
-        query = """
-        SELECT asset_id, node_name
-        FROM qbn.cpt_cache
-        WHERE model_version = %s
-          AND generated_at < NOW() - INTERVAL '%s hours'
-        ORDER BY generated_at ASC
-        """
-
-        with get_cursor() as cur:
-            cur.execute(query, (MODEL_VERSION, age_threshold_hours))
-            rows = cur.fetchall()
-
-        return [(row[0], row[1]) for row in rows]
+        tables = ['qbn.cpt_cache_structural', 'qbn.cpt_cache_entry', 'qbn.cpt_cache_position', 'qbn.cpt_cache']
+        all_stale = []
+        
+        for table in tables:
+            query = f"""
+            SELECT asset_id, node_name
+            FROM {table}
+            WHERE model_version = %s
+              AND generated_at < NOW() - INTERVAL '%s hours'
+            ORDER BY generated_at ASC
+            """
+            
+            with get_cursor() as cur:
+                cur.execute(query, (MODEL_VERSION, age_threshold_hours))
+                rows = cur.fetchall()
+                all_stale.extend([(row[0], row[1]) for row in rows])
+        
+        return all_stale
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """Return cache statistics."""
@@ -327,6 +363,7 @@ class CPTCacheManager:
         """
         Haal alle CPTs op voor een specifieke scope.
         REASON: Pakt automatisch de meest recente run_id voor deze scope.
+        REASON: Query alle 3 CPT tabellen (v3.4 split).
 
         Args:
             scope_key: Scope identifier (bijv. 'asset_1', 'top_10', 'all_assets')
@@ -335,71 +372,7 @@ class CPTCacheManager:
         Returns:
             Dict met node_name -> cpt_data mapping
         """
-        if run_id:
-            # REASON: Forceer scope load voor een specifieke training-run (validation alignment).
-            query = """
-            SELECT node_name, cpt_data, generated_at, outcome_mode, run_id
-            FROM qbn.cpt_cache
-            WHERE scope_key = %s
-              AND model_version = %s
-              AND run_id = %s
-              AND generated_at > NOW() - INTERVAL '%s hours'
-              AND (outcome_mode = 'barrier' OR outcome_mode = 'not_applicable')
-            ORDER BY node_name
-            """
-            params = [scope_key, MODEL_VERSION, run_id, max_age_hours]
-        else:
-            # REASON: Haal zowel 'barrier' als 'not_applicable' op voor de LAATSTE run
-            query = """
-            WITH latest_run AS (
-                SELECT run_id
-                FROM qbn.cpt_cache
-                WHERE scope_key = %s
-                  AND model_version = %s
-                  AND generated_at > NOW() - INTERVAL '%s hours'
-                ORDER BY generated_at DESC
-                LIMIT 1
-            )
-            SELECT node_name, cpt_data, generated_at, outcome_mode, run_id
-            FROM qbn.cpt_cache
-            WHERE scope_key = %s
-              AND model_version = %s
-              AND run_id = (SELECT run_id FROM latest_run)
-              AND (outcome_mode = 'barrier' OR outcome_mode = 'not_applicable')
-            ORDER BY node_name
-            """
-            params = [scope_key, MODEL_VERSION, max_age_hours, scope_key, MODEL_VERSION]
-
-        cpts = {}
-        with get_cursor() as cur:
-            cur.execute(query, tuple(params))
-            rows = cur.fetchall()
-
-            if not rows:
-                self.cache_misses += 1
-                logger.debug(f"Cache MISS: no CPTs for scope {scope_key}")
-                return {}
-
-            run_id = rows[0][4]
-            for node_name, cpt_data, generated_at, mode, r_id in rows:
-                if isinstance(cpt_data, str):
-                    data = json.loads(cpt_data)
-                else:
-                    data = cpt_data
-                
-                # Zorg dat metadata in de data zit voor de engine
-                if isinstance(data, dict):
-                    if mode != 'not_applicable':
-                        data['outcome_mode'] = mode
-                    data['run_id'] = r_id
-                
-                cpts[node_name] = data
-
-        if cpts:
-            self.cache_hits += len(cpts)
-            logger.info(f"Loaded {len(cpts)} CPTs for scope '{scope_key}' (Run: {run_id})")
-        
-        return cpts
+        return self._get_cpts_by_scope_multi_table(scope_key, max_age_hours, run_id=run_id)
 
     def get_asset_mapping(self, asset_id: int) -> Optional[Dict[str, str]]:
         """
@@ -445,6 +418,8 @@ class CPTCacheManager:
         2. Preferred scope uit qbn.asset_cpt_mapping
         3. Fallback scope (default: 'global')
 
+        REASON: Query alle 3 CPT tabellen en merge resultaten (v3.4 split).
+
         Args:
             asset_id: Asset ID
             max_age_hours: Maximum leeftijd in uren
@@ -452,28 +427,99 @@ class CPTCacheManager:
         Returns:
             Tuple van (cpts_dict, source_scope_key)
         """
-        # Stap 1: Direct asset lookup
+        # Stap 1: Direct asset lookup (merge van alle 3 tabellen)
         scope_key = f'asset_{asset_id}'
-        cpts = self.get_cpts_by_scope(scope_key, max_age_hours, run_id=run_id)
+        cpts = self._get_cpts_by_scope_multi_table(scope_key, max_age_hours, run_id=run_id)
         if cpts:
             return cpts, scope_key
 
         # Stap 2: Check mapping
         mapping = self.get_asset_mapping(asset_id)
         if mapping and mapping['preferred_scope']:
-            cpts = self.get_cpts_by_scope(mapping['preferred_scope'], max_age_hours, run_id=run_id)
+            cpts = self._get_cpts_by_scope_multi_table(mapping['preferred_scope'], max_age_hours, run_id=run_id)
             if cpts:
                 return cpts, mapping['preferred_scope']
 
         # Stap 3: Fallback naar global (indien aanwezig)
         fallback = mapping['fallback_scope'] if mapping else 'global'
-        cpts = self.get_cpts_by_scope(fallback, max_age_hours, run_id=run_id)
+        cpts = self._get_cpts_by_scope_multi_table(fallback, max_age_hours, run_id=run_id)
         if cpts:
             return cpts, fallback
 
         # Stap 4: Geen CPT gevonden
         logger.warning(f"Geen CPT gevonden voor asset {asset_id} in cascade lookup")
         return {}, 'none'
+
+    def _get_cpts_by_scope_multi_table(
+        self,
+        scope_key: str,
+        max_age_hours: int,
+        run_id: Optional[str] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Haal CPTs op uit alle 3 tabellen voor een scope.
+        REASON: Ondersteunt v3.4 split terwijl backward compatible met oude qbn.cpt_cache.
+        """
+        tables = ['qbn.cpt_cache_structural', 'qbn.cpt_cache_entry', 'qbn.cpt_cache_position', 'qbn.cpt_cache']
+        all_cpts = {}
+        
+        for table in tables:
+            if run_id:
+                query = f"""
+                SELECT node_name, cpt_data, generated_at, outcome_mode, run_id
+                FROM {table}
+                WHERE scope_key = %s
+                  AND model_version = %s
+                  AND run_id = %s
+                  AND generated_at > NOW() - INTERVAL '%s hours'
+                  AND (outcome_mode = 'barrier' OR outcome_mode = 'not_applicable')
+                ORDER BY node_name
+                """
+                params = [scope_key, MODEL_VERSION, run_id, max_age_hours]
+            else:
+                query = f"""
+                WITH latest_run AS (
+                    SELECT run_id
+                    FROM {table}
+                    WHERE scope_key = %s
+                      AND model_version = %s
+                      AND generated_at > NOW() - INTERVAL '%s hours'
+                    ORDER BY generated_at DESC
+                    LIMIT 1
+                )
+                SELECT node_name, cpt_data, generated_at, outcome_mode, run_id
+                FROM {table}
+                WHERE scope_key = %s
+                  AND model_version = %s
+                  AND run_id = (SELECT run_id FROM latest_run)
+                  AND (outcome_mode = 'barrier' OR outcome_mode = 'not_applicable')
+                ORDER BY node_name
+                """
+                params = [scope_key, MODEL_VERSION, max_age_hours, scope_key, MODEL_VERSION]
+            
+            with get_cursor() as cur:
+                cur.execute(query, tuple(params))
+                rows = cur.fetchall()
+                
+                for node_name, cpt_data, generated_at, mode, r_id in rows:
+                    if isinstance(cpt_data, str):
+                        data = json.loads(cpt_data)
+                    else:
+                        data = cpt_data
+                    
+                    # Zorg dat metadata in de data zit voor de engine
+                    if isinstance(data, dict):
+                        if mode != 'not_applicable':
+                            data['outcome_mode'] = mode
+                        data['run_id'] = r_id
+                    
+                    all_cpts[node_name] = data
+        
+        if all_cpts:
+            self.cache_hits += len(all_cpts)
+            logger.info(f"Loaded {len(all_cpts)} CPTs for scope '{scope_key}' from multi-table query")
+        
+        return all_cpts
 
     def set_asset_mapping(
         self,
@@ -511,24 +557,44 @@ class CPTCacheManager:
     def get_scope_info(self, scope_key: str) -> Optional[Dict[str, Any]]:
         """
         Haal metadata op voor een scope.
+        REASON: Query alle 3 CPT tabellen en aggregate (v3.4 split).
 
         Returns:
             Dict met scope_type, source_assets, generated_at, node_count
         """
-        query = """
+        tables = ['qbn.cpt_cache_structural', 'qbn.cpt_cache_entry', 'qbn.cpt_cache_position', 'qbn.cpt_cache']
+        
+        # Bouw UNION query
+        union_parts = []
+        for table in tables:
+            union_parts.append(f"""
+            SELECT
+                scope_type,
+                source_assets,
+                generated_at,
+                1 as node_count,
+                observations
+            FROM {table}
+            WHERE scope_key = %s AND model_version = %s
+            """)
+        
+        query = " UNION ALL ".join(union_parts)
+        query = f"""
+        WITH all_cpts AS ({query})
         SELECT
             scope_type,
             source_assets,
             MAX(generated_at) as latest_generated,
-            COUNT(*) as node_count,
+            SUM(node_count) as total_nodes,
             SUM(observations) as total_observations
-        FROM qbn.cpt_cache
-        WHERE scope_key = %s AND model_version = %s
+        FROM all_cpts
         GROUP BY scope_type, source_assets
         """
+        
+        params = [scope_key, MODEL_VERSION] * len(tables)
 
         with get_cursor() as cur:
-            cur.execute(query, (scope_key, MODEL_VERSION))
+            cur.execute(query, tuple(params))
             row = cur.fetchone()
 
         if row:
@@ -546,26 +612,45 @@ class CPTCacheManager:
     def list_available_scopes(self) -> List[Dict[str, Any]]:
         """
         Lijst alle beschikbare CPT scopes.
+        REASON: Query alle 3 CPT tabellen en merge resultaten (v3.4 split).
 
         Returns:
             Lijst van scope info dictionaries
         """
-        query = """
+        tables = ['qbn.cpt_cache_structural', 'qbn.cpt_cache_entry', 'qbn.cpt_cache_position', 'qbn.cpt_cache']
+        
+        # Bouw UNION query
+        union_parts = []
+        for table in tables:
+            union_parts.append(f"""
+            SELECT
+                scope_key,
+                scope_type,
+                source_assets,
+                generated_at
+            FROM {table}
+            WHERE model_version = %s AND scope_key IS NOT NULL
+            """)
+        
+        query = " UNION ALL ".join(union_parts)
+        query = f"""
+        WITH all_cpts AS ({query})
         SELECT
             scope_key,
             scope_type,
             source_assets,
             MAX(generated_at) as latest_generated,
             COUNT(*) as node_count
-        FROM qbn.cpt_cache
-        WHERE model_version = %s AND scope_key IS NOT NULL
+        FROM all_cpts
         GROUP BY scope_key, scope_type, source_assets
         ORDER BY scope_type, scope_key
         """
+        
+        params = [MODEL_VERSION] * len(tables)
 
         scopes = []
         with get_cursor() as cur:
-            cur.execute(query, (MODEL_VERSION,))
+            cur.execute(query, tuple(params))
             for row in cur.fetchall():
                 scopes.append({
                     'scope_key': row[0],

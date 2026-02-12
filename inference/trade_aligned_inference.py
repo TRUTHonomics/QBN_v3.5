@@ -320,7 +320,9 @@ class TradeAlignedInference:
                 # Map naar legacy position_confidence (MP -> confidence)
                 position_confidence = self._map_momentum_to_confidence(momentum_pred)
             else:
-                # v3.2 Fallback: Data-driven Position Confidence
+                # v3.2 DEPRECATED Fallback: Data-driven Position Confidence
+                # REASON: Blijft bestaan voor backward compatibility met runs zonder v3.4 CPTs
+                logger.warning("⚠️ Using DEPRECATED v3.2 Position_Confidence fallback (no v3.4 CPTs found)")
                 position_confidence, position_confidence_score, position_confidence_dist = self.position_gen.get_confidence(
                     coinc_val,
                     conf_val,
@@ -336,6 +338,7 @@ class TradeAlignedInference:
                     )
         else:
             # T=0 case: initiële confidence (voor entry check)
+            # DEPRECATED: v3.2 fallback voor backward compatibility
             position_confidence, position_confidence_score, position_confidence_dist = self.position_gen.get_confidence(
                 coinc_val,
                 conf_val,
@@ -552,6 +555,7 @@ class TradeAlignedInference:
             self.volatility_gen is not None,
             self.exit_timing_gen is not None
         ])
+        return base_generators
     
     def _has_v33_generators(self) -> bool:
         """DEPRECATED: Use _has_subprediction_generators() instead."""

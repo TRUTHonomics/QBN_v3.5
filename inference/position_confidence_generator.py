@@ -1,7 +1,16 @@
 """
-Position_Confidence Generator voor QBN v3.2
+[DEPRECATED v3.4] Position_Confidence Generator voor QBN v3.2
 
-v3.2 REDESIGN (Delta-based):
+REASON: In v3.4 vervangen door direct sub-predictions:
+- Momentum_Prediction (momentum evolution)
+- Volatility_Regime (volatiliteit clustering)
+- Exit_Timing (tijd-gebaseerde exit signalen)
+- Position_Prediction (geïntegreerd via bovenstaande nodes)
+
+Deze module blijft bestaan voor backward compatibility met v3.2 inference fallback code
+(zie trade_aligned_inference.py).
+
+v3.2 LEGACY (Delta-based):
 - Parents: Delta_Coincident, Delta_Confirming, Time_Since_Entry
 - Delta scores: verandering in composites sinds entry (direction-aware)
 - Uniqueness weighting (López de Prado) voor serial correlation correctie

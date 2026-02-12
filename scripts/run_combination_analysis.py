@@ -369,12 +369,14 @@ def main():
     
     # Run analysis for each target
     results = []
+    failed_targets = []
     for target in targets:
         try:
             result = run_analysis(args.asset_id, target, args)
             results.append(result)
         except Exception as e:
             logger.error(f"Analysis failed for target {target}: {e}")
+            failed_targets.append(target)
             if args.verbose:
                 import traceback
                 traceback.print_exc()
@@ -390,6 +392,15 @@ def main():
             print(f"  Promising:    {result.n_promising}")
     
     logger.info("Analysis complete!")
+    
+    # REASON: Return non-zero exit code if ALL targets failed
+    if failed_targets and len(failed_targets) == len(targets):
+        logger.error(f"ALL targets failed: {failed_targets}")
+        return 1
+    
+    if failed_targets:
+        logger.warning(f"Some targets failed: {failed_targets}, but continuing with partial results")
+    
     return 0
 
 

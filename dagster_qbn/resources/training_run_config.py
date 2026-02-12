@@ -36,8 +36,8 @@ class TrainingRunConfig(ConfigurableResource):
     incremental: bool = False
     """Alleen nieuwe data verwerken (skip bestaande). Gebruikt door: barrier_outcomes."""
 
-    overwrite: bool = False
-    """Bestaande outcomes overschrijven. Gebruikt door: barrier_outcomes, barrier_outcomes_leading."""
+    overwrite: bool = True
+    """Bestaande outcomes overschrijven (standaard aan voor clean training). Gebruikt door: barrier_outcomes, barrier_outcomes_leading."""
 
     # === Threshold Optimization ===
     methods: str = "mi,cart,logreg"

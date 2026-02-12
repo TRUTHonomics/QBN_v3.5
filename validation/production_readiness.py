@@ -461,8 +461,9 @@ class ProductionReadinessValidator:
         Check if CPTs are available via cascade lookup.
         Uses the CPTCacheManager for proper scope resolution.
         """
-        # Defensive check: run_id moet bestaan in cpt_cache
-        self._check_run_id_exists_in_table("cpt_cache")
+        # Defensive check: run_id moet bestaan in split-tabellen
+        # REASON: v3.4 gebruikt split-tabellen; check primary entry table
+        self._check_run_id_exists_in_table("cpt_cache_entry")
 
         try:
             from inference.cpt_cache_manager import CPTCacheManager
@@ -483,9 +484,8 @@ class ProductionReadinessValidator:
                     threshold='>0 nodes'
                 )
 
-            # Expected nodes (approximate)
-            # v3.1 adds Position_Confidence and Position_Prediction
-            expected_nodes = 14  # Typical QBN v3.1 network size
+            # Expected nodes v3.4: 1 structural + 7 entry + 4 position = 12 nodes
+            expected_nodes = 12
 
             if len(cpts) >= expected_nodes * THRESHOLDS['cpt_node_coverage']['pass']:
                 status = 'PASS'
@@ -524,30 +524,29 @@ class ProductionReadinessValidator:
         try:
             with get_cursor() as cur:
                 # Get a sample CPT to analyze key coverage
-                run_clause, run_params = self._run_id_clause("cpt_cache")
+                # REASON: v3.4 - query cpt_cache_entry voor Prediction nodes
+                run_clause, run_params = self._run_id_clause("cpt_cache_entry")
                 cur.execute("""
                     SELECT node_name, cpt_data, coverage
-                    FROM qbn.cpt_cache
+                    FROM qbn.cpt_cache_entry
                     WHERE (scope_key = %s OR scope_key = 'global')
-                      AND model_version = %s
                       AND (node_name LIKE 'Prediction%%' OR node_name = 'Position_Prediction')
                 """ + run_clause + """
                     ORDER BY generated_at DESC
                     LIMIT 1
-                """, tuple([f'asset_{self.asset_id}', MODEL_VERSION] + run_params))
+                """, tuple([f'asset_{self.asset_id}'] + run_params))
                 row = cur.fetchone()
 
             if not row:
                 # Fall back to any CPT for this asset
                 with get_cursor() as cur:
-                    run_clause, run_params = self._run_id_clause("cpt_cache")
+                    run_clause, run_params = self._run_id_clause("cpt_cache_entry")
                     cur.execute("""
-                        SELECT AVG(coverage) FROM qbn.cpt_cache
+                        SELECT AVG(coverage) FROM qbn.cpt_cache_entry
                         WHERE (asset_id = %s OR scope_key = %s)
-                          AND model_version = %s
                           AND coverage IS NOT NULL
                     """ + run_clause + """
-                    """, tuple([self.asset_id, f'asset_{self.asset_id}', MODEL_VERSION] + run_params))
+                    """, tuple([self.asset_id, f'asset_{self.asset_id}'] + run_params))
                     avg_cov = cur.fetchone()[0]
 
                 if avg_cov is None:
@@ -604,15 +603,31 @@ class ProductionReadinessValidator:
         """
         try:
             with get_cursor() as cur:
-                run_clause, run_params = self._run_id_clause("cpt_cache")
+                # REASON: v3.4 - query over alle drie split-tabellen met UNION
+                if self.run_id:
+                    run_clause = " AND run_id = %s"
+                    run_params = [self.run_id]
+                else:
+                    run_clause = ""
+                    run_params = []
+                
                 cur.execute("""
                     SELECT AVG(entropy), MIN(entropy), MAX(entropy), COUNT(*)
-                    FROM qbn.cpt_cache
-                    WHERE (asset_id = %s OR scope_key = %s)
-                      AND model_version = %s
-                      AND entropy IS NOT NULL
-                """ + run_clause + """
-                """, tuple([self.asset_id, f'asset_{self.asset_id}', MODEL_VERSION] + run_params))
+                    FROM (
+                        SELECT entropy FROM qbn.cpt_cache_structural 
+                        WHERE (asset_id = %s OR scope_key = %s) AND entropy IS NOT NULL""" + run_clause + """
+                        UNION ALL
+                        SELECT entropy FROM qbn.cpt_cache_entry 
+                        WHERE (asset_id = %s OR scope_key = %s) AND entropy IS NOT NULL""" + run_clause + """
+                        UNION ALL
+                        SELECT entropy FROM qbn.cpt_cache_position 
+                        WHERE (asset_id = %s OR scope_key = %s) AND entropy IS NOT NULL""" + run_clause + """
+                    ) AS all_cpts
+                """, tuple([
+                    self.asset_id, f'asset_{self.asset_id}'] + run_params + [
+                    self.asset_id, f'asset_{self.asset_id}'] + run_params + [
+                    self.asset_id, f'asset_{self.asset_id}'] + run_params
+                ))
                 row = cur.fetchone()
 
             if not row or row[3] == 0:
@@ -672,14 +687,29 @@ class ProductionReadinessValidator:
         """
         try:
             with get_cursor() as cur:
-                run_clause, run_params = self._run_id_clause("cpt_cache")
+                # REASON: v3.4 - query over alle drie split-tabellen
+                # run_id filtering alleen als run_id beschikbaar is
+                if self.run_id:
+                    run_clause = " AND run_id = %s"
+                    run_params = [self.run_id]
+                else:
+                    run_clause = ""
+                    run_params = []
+                
                 cur.execute("""
-                    SELECT MAX(generated_at)
-                    FROM qbn.cpt_cache
-                    WHERE (asset_id = %s OR scope_key = %s)
-                      AND model_version = %s
-                """ + run_clause + """
-                """, tuple([self.asset_id, f'asset_{self.asset_id}', MODEL_VERSION] + run_params))
+                    SELECT GREATEST(
+                        (SELECT MAX(generated_at) FROM qbn.cpt_cache_structural 
+                         WHERE (asset_id = %s OR scope_key = %s)""" + run_clause + """),
+                        (SELECT MAX(generated_at) FROM qbn.cpt_cache_entry 
+                         WHERE (asset_id = %s OR scope_key = %s)""" + run_clause + """),
+                        (SELECT MAX(generated_at) FROM qbn.cpt_cache_position 
+                         WHERE (asset_id = %s OR scope_key = %s)""" + run_clause + """)
+                    ) as max_generated
+                """, tuple([
+                    self.asset_id, f'asset_{self.asset_id}'] + run_params + [
+                    self.asset_id, f'asset_{self.asset_id}'] + run_params + [
+                    self.asset_id, f'asset_{self.asset_id}'] + run_params
+                ))
                 row = cur.fetchone()
 
             if not row or row[0] is None:

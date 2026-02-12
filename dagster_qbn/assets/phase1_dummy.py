@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dagster import AssetKey, asset, MetadataValue
+from dagster import AssetKey, AutoMaterializePolicy, MetadataValue, asset
 
 
 # REASON: Alleen key (geen name) — Dagster: "Cannot specify name when key is provided"
@@ -11,6 +11,7 @@ from dagster import AssetKey, asset, MetadataValue
     key=AssetKey(["phase1", "qbn_db_health_check"]),
     description="Fase 1 dummy asset: test Dagster ↔ Postgres connectie (geen GPU).",
     required_resource_keys={"postgres"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def qbn_db_health_check(context) -> dict:
     """

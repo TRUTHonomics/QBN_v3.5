@@ -130,16 +130,26 @@ class QBNv3CPTGenerator:
             return
 
         logger.info(f"🔍 Loading Combination Alpha results for asset {asset_id}...")
-        query = """
-            SELECT horizon, combination_key, target_type, odds_ratio, or_ci_lower, classification, p_value_corrected
-            FROM qbn.combination_alpha
-            WHERE asset_id = %s AND run_id = %s
-            ORDER BY analyzed_at DESC
-        """
+        if self.run_id:
+            query = """
+                SELECT horizon, combination_key, target_type, odds_ratio, or_ci_lower, classification, p_value_corrected
+                FROM qbn.combination_alpha
+                WHERE asset_id = %s AND run_id = %s
+                ORDER BY analyzed_at DESC
+            """
+            params = (asset_id, self.run_id)
+        else:
+            query = """
+                SELECT horizon, combination_key, target_type, odds_ratio, or_ci_lower, classification, p_value_corrected
+                FROM qbn.combination_alpha
+                WHERE asset_id = %s
+                ORDER BY analyzed_at DESC
+            """
+            params = (asset_id,)
         
         results = {}
         with get_cursor() as cur:
-            cur.execute(query, (asset_id, self.run_id))
+            cur.execute(query, params)
             rows = cur.fetchall()
             
             for row in rows:
@@ -294,15 +304,26 @@ class QBNv3CPTGenerator:
         # STAP 2: Haal weights op indien asset_id en horizon meegegeven
         weights_data = {} # (full_name, horizon) -> weight
         if asset_id and horizon:
-            weights_query = """
-            SELECT DISTINCT ON (signal_name, horizon)
-                signal_name, horizon, weight
-            FROM qbn.signal_weights
-            WHERE (asset_id = %s OR asset_id = 0) AND run_id = %s
-            ORDER BY signal_name, horizon, asset_id DESC
-            """
+            if run_id:
+                weights_query = """
+                SELECT DISTINCT ON (signal_name, horizon)
+                    signal_name, horizon, weight
+                FROM qbn.signal_weights
+                WHERE (asset_id = %s OR asset_id = 0) AND run_id = %s
+                ORDER BY signal_name, horizon, asset_id DESC
+                """
+                params = (asset_id, run_id)
+            else:
+                weights_query = """
+                SELECT DISTINCT ON (signal_name, horizon)
+                    signal_name, horizon, weight
+                FROM qbn.signal_weights
+                WHERE (asset_id = %s OR asset_id = 0)
+                ORDER BY signal_name, horizon, asset_id DESC, last_trained_at DESC
+                """
+                params = (asset_id,)
             with get_cursor() as cur:
-                cur.execute(weights_query, (asset_id, run_id))
+                cur.execute(weights_query, params)
                 for full_name, h, weight in cur.fetchall():
                     weights_data[(full_name.lower(), h)] = float(weight or 1.0)
 
@@ -361,15 +382,20 @@ class QBNv3CPTGenerator:
 
     def generate_position_confidence_cpt(self, asset_id: int, data: pd.DataFrame) -> Dict[str, Any]:
         """
-        Genereer Position_Confidence CPT (Data-Driven v3.2).
+        [DEPRECATED v3.4] Genereer Position_Confidence CPT (Data-Driven v3.2).
         
-        v3.2 NIEUW:
+        REASON: In v3.4 vervangen door direct sub-predictions (Momentum_Prediction, Volatility_Regime, Exit_Timing).
+        Deze methode blijft bestaan voor backward compatibility met v3.2 inference fallback code.
+        
+        v3.2 LEGACY:
         - Delta-based parents (verandering sinds entry)
         - Uniqueness weighting (López de Prado)
         - Laadt delta thresholds uit database
         """
+        logger.warning(f"⚠️ generate_position_confidence_cpt() is DEPRECATED in v3.4. Use generate_position_cpts() instead.")
+        
         node_name = "Position_Confidence"
-        logger.info(f"🎯 Generating data-driven {node_name} CPT v3.2 for asset {asset_id}")
+        logger.info(f"🎯 Generating data-driven {node_name} CPT v3.2 (LEGACY) for asset {asset_id}")
         
         # v3.2: Laad delta thresholds uit database
         try:
@@ -969,42 +995,166 @@ class QBNv3CPTGenerator:
         
         return cpt_data
 
-    def generate_all_cpts(
+    def generate_structural_cpts(
+        self,
+        asset_id: int,
+        lookback_days: Optional[int] = None,
+        save_to_db: bool = True
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Genereer alleen structurele CPTs (HTF_Regime).
+        REASON: v3.4 split voor onafhankelijke structural/entry/position compute.
+        """
+        logger.info(f"🔧 Generating STRUCTURAL CPTs for asset {asset_id}")
+        
+        self._snapshot_db_config(asset_id)
+        data = self._prepare_merged_dataset([asset_id], lookback_days)
+        
+        if data.empty:
+            logger.error(f"No data found for asset {asset_id}")
+            return {}
+        
+        cpts = {}
+        cpts['HTF_Regime'] = self.generate_htf_regime_cpt(asset_id, data=data)
+        
+        if save_to_db:
+            from inference.cpt_cache_manager import CPTCacheManager
+            cache = CPTCacheManager()
+            scope_key = f'asset_{asset_id}'
+            for node_name, cpt_data in cpts.items():
+                cache.save_cpt(
+                    asset_id, node_name, cpt_data,
+                    scope_type='single',
+                    scope_key=scope_key,
+                    source_assets=[asset_id],
+                    run_id=self.run_id
+                )
+            log_handshake_out(
+                step="qbn_v3_cpt_generator_structural",
+                target="qbn.cpt_cache_structural",
+                run_id=self.run_id or "N/A",
+                rows=len(cpts),
+                operation="INSERT"
+            )
+        
+        logger.info(f"✅ Generated {len(cpts)} structural CPTs for asset {asset_id}")
+        return cpts
+
+    def generate_entry_cpts(
         self,
         asset_id: int,
         lookback_days: Optional[int] = None,
         save_to_db: bool = True,
         validate_quality: bool = True
     ) -> Dict[str, Dict[str, Any]]:
-        """Volledige pipeline voor een enkel asset."""
-        # REASON: Altijd barrier modus gebruiken
-        logger.info(f"🚀 Starting full QBN v3 CPT generation for asset {asset_id} (mode=barrier)")
-
+        """
+        Genereer entry-side CPTs (Composites + Trade_Hypothesis + Prediction_1h/4h/1d).
+        REASON: v3.4 split voor onafhankelijke structural/entry/position compute.
+        Dependencies: barrier_outcomes, signal_weights, composite_threshold_config.
+        """
+        logger.info(f"🔧 Generating ENTRY CPTs for asset {asset_id}")
+        
         self._snapshot_db_config(asset_id)
         data = self._prepare_merged_dataset([asset_id], lookback_days)
-
+        
         if data.empty:
             logger.error(f"No data found for asset {asset_id}")
             return {}
-
-        # Validation guards: check upstream barrier_outcomes + event_windows
+        
+        # Validation guard: check upstream barrier_outcomes
         if hasattr(self, 'run_id') and self.run_id:
             try:
                 from database.db import get_cursor
                 with get_cursor() as cur:
                     validate_step_input(
                         conn=cur.connection,
-                        step_name="cpt_generation_barriers",
+                        step_name="cpt_generation_entry_barriers",
                         upstream_table="qbn.barrier_outcomes",
                         asset_id=asset_id,
-                        run_id=None,  # REASON: barrier_outcomes is global, heeft geen run_id kolom
+                        run_id=None,  # barrier_outcomes is global
                         min_rows=100,
                         extra_where="training_weight IS NOT NULL",
-                        log_run_id=self.run_id  # REASON: Log wel de echte run_id voor traceability
+                        log_run_id=self.run_id
                     )
+            except StepValidationError as e:
+                logger.info(f"Upstream validation note: {e}")
+            except Exception as e:
+                logger.warning(f"Upstream validation failed (DB issue): {e}")
+        
+        cpts = {}
+        
+        # Composite Nodes
+        default_horizon = '1h'
+        for sem_class in SemanticClass:
+            node_name = f"{sem_class.value.capitalize()}_Composite"
+            cpts[node_name] = self.generate_composite_cpt(asset_id, sem_class, data=data, horizon=default_horizon)
+        
+        # Trade Hypothesis
+        cpts['Trade_Hypothesis'] = self.generate_trade_hypothesis_cpt(asset_id, data=data)
+        
+        # Prediction Nodes
+        for horizon in ['1h', '4h', '1d']:
+            node_name = f"Prediction_{horizon}"
+            cpts[node_name] = self.generate_prediction_cpt(
+                asset_id, horizon, data=data, 
+                lookback_days=lookback_days
+            )
+        
+        if validate_quality and lookback_days and lookback_days > 14:
+            logger.info(f"🧪 Running quality validation (stability check) for asset {asset_id}")
+            self._run_stability_validation(asset_id, cpts, lookback_days)
+        
+        if save_to_db:
+            from inference.cpt_cache_manager import CPTCacheManager
+            cache = CPTCacheManager()
+            scope_key = f'asset_{asset_id}'
+            for node_name, cpt_data in cpts.items():
+                cache.save_cpt(
+                    asset_id, node_name, cpt_data,
+                    scope_type='single',
+                    scope_key=scope_key,
+                    source_assets=[asset_id],
+                    run_id=self.run_id
+                )
+            log_handshake_out(
+                step="qbn_v3_cpt_generator_entry",
+                target="qbn.cpt_cache_entry",
+                run_id=self.run_id or "N/A",
+                rows=len(cpts),
+                operation="INSERT"
+            )
+        
+        logger.info(f"✅ Generated {len(cpts)} entry CPTs for asset {asset_id}")
+        return cpts
+
+    def generate_position_cpts(
+        self,
+        asset_id: int,
+        lookback_days: Optional[int] = None,
+        save_to_db: bool = True
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Genereer position-side CPTs (Momentum_Prediction + Volatility_Regime + Exit_Timing + Position_Prediction).
+        REASON: v3.4 split voor onafhankelijke structural/entry/position compute.
+        Dependencies: event_windows, position_delta_threshold_config.
+        """
+        logger.info(f"🔧 Generating POSITION CPTs for asset {asset_id}")
+        
+        self._snapshot_db_config(asset_id)
+        data = self._prepare_merged_dataset([asset_id], lookback_days)
+        
+        if data.empty:
+            logger.error(f"No data found for asset {asset_id}")
+            return {}
+        
+        # Validation guard: check upstream event_windows
+        if hasattr(self, 'run_id') and self.run_id:
+            try:
+                from database.db import get_cursor
+                with get_cursor() as cur:
                     validate_step_input(
                         conn=cur.connection,
-                        step_name="cpt_generation_events",
+                        step_name="cpt_generation_position_events",
                         upstream_table="qbn.event_windows",
                         asset_id=asset_id,
                         run_id=self.run_id,
@@ -1014,55 +1164,22 @@ class QBNv3CPTGenerator:
                 logger.info(f"Upstream validation note: {e}")
             except Exception as e:
                 logger.warning(f"Upstream validation failed (DB issue): {e}")
-
+        
         cpts = {}
-
-        # 1. HTF Regime (Root)
-        cpts['HTF_Regime'] = self.generate_htf_regime_cpt(asset_id, data=data)
-
-        # 2. Composite Nodes
-        default_horizon = '1h'
-        for sem_class in SemanticClass:
-            node_name = f"{sem_class.value.capitalize()}_Composite"
-            cpts[node_name] = self.generate_composite_cpt(asset_id, sem_class, data=data, horizon=default_horizon)
-
-        # 3. v3.1 Intermediate Nodes (Entry_Confidence verwijderd)
-        cpts['Trade_Hypothesis'] = self.generate_trade_hypothesis_cpt(asset_id, data=data)
         
-        # v3.2 Legacy: Position_Confidence (behouden voor backward compatibility)
-        cpts['Position_Confidence'] = self.generate_position_confidence_cpt(asset_id, data=data)
-        
-        # 4. v3.4 Direct Sub-Predictions Position Nodes
-        logger.info(f"🔧 Generating v3.4 Direct Sub-Predictions CPTs for asset {asset_id}")
+        # v3.4 Direct Sub-Predictions Position Nodes
         cpts['Momentum_Prediction'] = self.generate_momentum_prediction_cpt(asset_id, data=data)
         cpts['Volatility_Regime'] = self.generate_volatility_regime_cpt(asset_id, data=data)
         cpts['Exit_Timing'] = self.generate_exit_timing_cpt(asset_id, data=data)
         
-        # v3.4: Risk_Adjusted_Confidence NIET meer genereren (deprecated)
-        # v3.3 LEGACY: Uncomment de volgende regel voor backward compatibility
-        # cpts['Risk_Adjusted_Confidence'] = self.generate_risk_adjusted_confidence_cpt()
-
-        # 5. v3.4 Position Prediction (direct met MP/VR/ET als parents)
+        # v3.4 Position Prediction (direct met MP/VR/ET als parents)
         cpts['Position_Prediction'] = self._generate_position_prediction_cpt(asset_id, data=data)
-
-        # 5. Prediction Nodes
-        for horizon in ['1h', '4h', '1d']:
-            node_name = f"Prediction_{horizon}"
-            cpts[node_name] = self.generate_prediction_cpt(
-                asset_id, horizon, data=data, 
-                lookback_days=lookback_days
-            )
-
-        if validate_quality and lookback_days and lookback_days > 14:
-            logger.info(f"🧪 Running quality validation (stability check) for asset {asset_id}")
-            self._run_stability_validation(asset_id, cpts, lookback_days)
-
+        
         if save_to_db:
             from inference.cpt_cache_manager import CPTCacheManager
             cache = CPTCacheManager()
             scope_key = f'asset_{asset_id}'
             for node_name, cpt_data in cpts.items():
-                # REASON: CPTCacheManager bepaalt nu zelf of mode relevant is
                 cache.save_cpt(
                     asset_id, node_name, cpt_data,
                     scope_type='single',
@@ -1070,19 +1187,39 @@ class QBNv3CPTGenerator:
                     source_assets=[asset_id],
                     run_id=self.run_id
                 )
-
-        logger.info(f"✅ Generated {len(cpts)} CPTs for asset {asset_id}")
-        
-        # HANDSHAKE_OUT logging (alleen als daadwerkelijk naar DB geschreven)
-        if save_to_db:
             log_handshake_out(
-                step="qbn_v3_cpt_generator",
-                target="qbn.cpt_cache",
+                step="qbn_v3_cpt_generator_position",
+                target="qbn.cpt_cache_position",
                 run_id=self.run_id or "N/A",
                 rows=len(cpts),
                 operation="INSERT"
             )
         
+        logger.info(f"✅ Generated {len(cpts)} position CPTs for asset {asset_id}")
+        return cpts
+
+    def generate_all_cpts(
+        self,
+        asset_id: int,
+        lookback_days: Optional[int] = None,
+        save_to_db: bool = True,
+        validate_quality: bool = True
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Volledige pipeline voor een enkel asset (convenience wrapper).
+        REASON: Roept alle 3 generatoren aan voor backward compatibility.
+        """
+        logger.info(f"🚀 Starting full QBN v3 CPT generation for asset {asset_id} (mode=barrier)")
+        
+        cpts = {}
+        cpts.update(self.generate_structural_cpts(asset_id, lookback_days, save_to_db=save_to_db))
+        cpts.update(self.generate_entry_cpts(asset_id, lookback_days, save_to_db=save_to_db, validate_quality=validate_quality))
+        cpts.update(self.generate_position_cpts(asset_id, lookback_days, save_to_db=save_to_db))
+        
+        # DEPRECATED: Position_Confidence (v3.2 legacy, verwijderd in v3.4)
+        # Zie generate_position_confidence_cpt() voor fallback code
+        
+        logger.info(f"✅ Generated {len(cpts)} CPTs (structural+entry+position) for asset {asset_id}")
         return cpts
 
     def generate_composite_cpts(

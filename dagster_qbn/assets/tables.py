@@ -9,12 +9,11 @@ from __future__ import annotations
 import os
 import subprocess
 import time
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from dagster import AssetKey, MetadataValue, SourceAsset, asset
+from dagster import AssetKey, AutoMaterializePolicy, MetadataValue, SourceAsset, asset
 
 
 # ============================================================================
@@ -53,40 +52,19 @@ kfl_mtf_signals_conf = SourceAsset(
 # HELPER FUNCTIONS
 # ============================================================================
 
-_RUN_ID_FILE = "/tmp/qbn_current_run_id"
 
-
-def _resolve_run_id(cfg) -> str:
+def _resolve_run_id(cfg, context) -> str:
     """
-    Geeft cfg.run_id terug, of genereert eenmalig een nieuw run_id.
+    Geeft cfg.run_id terug, of leidt een stabiele run_id af van Dagster run_id.
     
-    REASON: Container-file approach zorgt ervoor dat alle assets binnen
-    één pipeline run hetzelfde run_id gebruiken zonder de Dagster graph te wijzigen.
+    REASON: Dagster assets draaien in aparte subprocessen. Een process-lokale cache
+    levert daardoor verschillende run_ids op. `context.run_id` is run-breed en dus
+    deterministic over alle subprocessen binnen dezelfde Dagster run.
+    We normaliseren naar 32 chars (zonder '-') voor DB kolommen met varchar(32).
     """
     if cfg.run_id:
         return cfg.run_id
-    
-    # Check of een eerder asset in deze run al een run_id heeft geschreven
-    try:
-        result = subprocess.run(
-            ["docker", "exec", "QBN_v4_Training", "cat", _RUN_ID_FILE],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-        pass
-    
-    # Genereer nieuw run_id en schrijf naar container-file
-    new_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
-    subprocess.run(
-        ["docker", "exec", "QBN_v4_Training", "bash", "-c", f"echo '{new_id}' > {_RUN_ID_FILE}"],
-        check=True,
-        timeout=5
-    )
-    return new_id
+    return context.run_id.replace("-", "")[:32]
 
 
 def _run_training_script(
@@ -106,7 +84,7 @@ def _run_training_script(
         Dict met stdout, stderr, returncode en elapsed_time_sec.
     """
     cfg = context.resources.training_run_config
-    run_id = _resolve_run_id(cfg)
+    run_id = _resolve_run_id(cfg, context)
     
     cmd = [
         "docker",
@@ -174,6 +152,7 @@ def _run_training_script(
         "data_volume": "medium",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def composite_threshold_config(context) -> dict:
     """
@@ -232,6 +211,7 @@ def composite_threshold_config(context) -> dict:
         "data_volume": "large",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def barrier_outcomes(context) -> dict:
     """
@@ -284,6 +264,7 @@ def barrier_outcomes(context) -> dict:
         "data_volume": "large",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def barrier_outcomes_leading(context) -> dict:
     """
@@ -333,6 +314,7 @@ def barrier_outcomes_leading(context) -> dict:
         "data_volume": "large",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def barrier_outcomes_weights(context) -> dict:
     """
@@ -379,6 +361,7 @@ def barrier_outcomes_weights(context) -> dict:
         "data_volume": "medium",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def signal_weights(context) -> dict:
     """
@@ -425,6 +408,7 @@ def signal_weights(context) -> dict:
         "data_volume": "large",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def combination_alpha(context) -> dict:
     """
@@ -440,6 +424,7 @@ def combination_alpha(context) -> dict:
         "--lookback-days", str(cfg.lookback_days),
         "--n-bootstrap", str(cfg.n_bootstrap),
         "--save-db",
+        "--all-targets",
     ]
 
     if not cfg.use_gpu:
@@ -479,6 +464,7 @@ def combination_alpha(context) -> dict:
         "data_volume": "large",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def event_windows(context) -> dict:
     """
@@ -521,6 +507,7 @@ def event_windows(context) -> dict:
         "data_volume": "medium",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def position_delta_threshold_config(context) -> dict:
     """
@@ -550,16 +537,91 @@ def position_delta_threshold_config(context) -> dict:
 
 
 @asset(
-    key=AssetKey(["qbn", "cpt_cache"]),
+    key=AssetKey(["qbn", "cpt_cache_structural"]),
     deps=[
-        AssetKey(["qbn", "barrier_outcomes_weights"]),
-        AssetKey(["qbn", "event_windows"]),
-        AssetKey(["qbn", "position_delta_threshold_config"]),
+        AssetKey(["qbn", "composite_threshold_config"]),
     ],
-    description="Conditional Probability Tables voor Bayesian Network nodes",
+    description="Structural CPTs (HTF_Regime) voor QBN v3.4",
     metadata={
-        "table_name": "qbn.cpt_cache",
-        "reads_from": ["qbn.barrier_outcomes", "qbn.event_windows", "qbn.signal_classification"],
+        "table_name": "qbn.cpt_cache_structural",
+        "reads_from": ["qbn.composite_threshold_config"],
+        "gpu_required": False,
+        "script": "inference/qbn_v3_cpt_generator.py",
+    },
+    tags={
+        "schema": "qbn",
+        "gpu": "false",
+        "stage": "training",
+        "category": "cpt_generation",
+        "data_volume": "small",
+        "v3.4": "structural",
+    },
+    required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
+)
+def cpt_cache_structural(context) -> dict:
+    """
+    Genereert structurele CPTs (HTF_Regime).
+    
+    Script: inference/qbn_v3_cpt_generator.py
+    Output: qbn.cpt_cache_structural
+    """
+    cfg = context.resources.training_run_config
+    run_id = _resolve_run_id(cfg, context)
+
+    cmd = [
+        "docker",
+        "exec",
+        "QBN_v4_Training",
+        "python",
+        "-c",
+        f"from inference.qbn_v3_cpt_generator import QBNv3CPTGenerator; "
+        f"gen = QBNv3CPTGenerator(run_id='{run_id}'); "
+        f"gen.generate_structural_cpts(asset_id={cfg.asset_id})",
+    ]
+
+    context.log.info(f"Executing structural CPT generation (run_id={run_id})")
+
+    start = time.time()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    elapsed = time.time() - start
+
+    if result.stdout:
+        context.log.info(f"STDOUT:\n{result.stdout}")
+    if result.stderr:
+        if result.returncode != 0:
+            context.log.warning(f"STDERR:\n{result.stderr}")
+        else:
+            context.log.info(f"STDERR:\n{result.stderr}")
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Structural CPT generation failed with exit code {result.returncode}")
+
+    context.add_output_metadata({
+        "asset_id": MetadataValue.int(cfg.asset_id),
+        "run_id": MetadataValue.text(run_id),
+        "execution_time_sec": MetadataValue.float(elapsed),
+    })
+
+    return {
+        "returncode": result.returncode,
+        "elapsed_time_sec": elapsed,
+        "run_id": run_id,
+    }
+
+
+@asset(
+    key=AssetKey(["qbn", "cpt_cache_entry"]),
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "barrier_outcomes_weights"]),
+        AssetKey(["qbn", "signal_weights"]),
+        AssetKey(["qbn", "combination_alpha"]),
+    ],
+    description="Entry-side CPTs (Composites + Predictions) voor QBN v3.4",
+    metadata={
+        "table_name": "qbn.cpt_cache_entry",
+        "reads_from": ["qbn.barrier_outcomes", "qbn.signal_weights", "qbn.combination_alpha"],
         "gpu_required": False,
         "script": "inference/qbn_v3_cpt_generator.py",
     },
@@ -569,20 +631,21 @@ def position_delta_threshold_config(context) -> dict:
         "stage": "training",
         "category": "cpt_generation",
         "data_volume": "large",
+        "v3.4": "entry",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
-def cpt_cache(context) -> dict:
+def cpt_cache_entry(context) -> dict:
     """
-    Genereert CPTs voor alle Bayesian Network nodes.
+    Genereert entry-side CPTs (Composites + Trade_Hypothesis + Prediction_1h/4h/1d).
     
     Script: inference/qbn_v3_cpt_generator.py
-    Output: qbn.cpt_cache
+    Output: qbn.cpt_cache_entry
     """
     cfg = context.resources.training_run_config
-    run_id = _resolve_run_id(cfg)
+    run_id = _resolve_run_id(cfg, context)
 
-    # REASON: CPT generator wordt via python -c aangeroepen
     cmd = [
         "docker",
         "exec",
@@ -591,10 +654,10 @@ def cpt_cache(context) -> dict:
         "-c",
         f"from inference.qbn_v3_cpt_generator import QBNv3CPTGenerator; "
         f"gen = QBNv3CPTGenerator(run_id='{run_id}'); "
-        f"gen.generate_all_cpts(asset_id={cfg.asset_id})",
+        f"gen.generate_entry_cpts(asset_id={cfg.asset_id})",
     ]
 
-    context.log.info(f"Executing: {' '.join(cmd[:4])} [python -c ...] (run_id={run_id})")
+    context.log.info(f"Executing entry CPT generation (run_id={run_id})")
 
     start = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
@@ -609,18 +672,92 @@ def cpt_cache(context) -> dict:
             context.log.info(f"STDERR:\n{result.stderr}")
 
     if result.returncode != 0:
-        raise RuntimeError(f"CPT generation failed with exit code {result.returncode}")
+        raise RuntimeError(f"Entry CPT generation failed with exit code {result.returncode}")
 
     context.add_output_metadata({
         "asset_id": MetadataValue.int(cfg.asset_id),
         "run_id": MetadataValue.text(run_id),
         "execution_time_sec": MetadataValue.float(elapsed),
-        "stdout_lines": MetadataValue.int(len(result.stdout.splitlines())),
     })
 
     return {
         "returncode": result.returncode,
-        "stdout_lines": len(result.stdout.splitlines()),
+        "elapsed_time_sec": elapsed,
+        "run_id": run_id,
+    }
+
+
+@asset(
+    key=AssetKey(["qbn", "cpt_cache_position"]),
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "event_windows"]),
+        AssetKey(["qbn", "position_delta_threshold_config"]),
+    ],
+    description="Position-side CPTs (Momentum/Volatility/Exit/Position) voor QBN v3.4",
+    metadata={
+        "table_name": "qbn.cpt_cache_position",
+        "reads_from": ["qbn.event_windows", "qbn.position_delta_threshold_config"],
+        "gpu_required": False,
+        "script": "inference/qbn_v3_cpt_generator.py",
+    },
+    tags={
+        "schema": "qbn",
+        "gpu": "false",
+        "stage": "training",
+        "category": "cpt_generation",
+        "data_volume": "medium",
+        "v3.4": "position",
+    },
+    required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
+)
+def cpt_cache_position(context) -> dict:
+    """
+    Genereert position-side CPTs (Momentum_Prediction + Volatility_Regime + Exit_Timing + Position_Prediction).
+    
+    Script: inference/qbn_v3_cpt_generator.py
+    Output: qbn.cpt_cache_position
+    """
+    cfg = context.resources.training_run_config
+    run_id = _resolve_run_id(cfg, context)
+
+    cmd = [
+        "docker",
+        "exec",
+        "QBN_v4_Training",
+        "python",
+        "-c",
+        f"from inference.qbn_v3_cpt_generator import QBNv3CPTGenerator; "
+        f"gen = QBNv3CPTGenerator(run_id='{run_id}'); "
+        f"gen.generate_position_cpts(asset_id={cfg.asset_id})",
+    ]
+
+    context.log.info(f"Executing position CPT generation (run_id={run_id})")
+
+    start = time.time()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    elapsed = time.time() - start
+
+    if result.stdout:
+        context.log.info(f"STDOUT:\n{result.stdout}")
+    if result.stderr:
+        if result.returncode != 0:
+            context.log.warning(f"STDERR:\n{result.stderr}")
+        else:
+            context.log.info(f"STDERR:\n{result.stderr}")
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Position CPT generation failed with exit code {result.returncode}")
+
+    context.add_output_metadata({
+        "asset_id": MetadataValue.int(cfg.asset_id),
+        "run_id": MetadataValue.text(run_id),
+        "execution_time_sec": MetadataValue.float(elapsed),
+    })
+
+    return {
+        "returncode": result.returncode,
         "elapsed_time_sec": elapsed,
         "run_id": run_id,
     }
@@ -628,7 +765,11 @@ def cpt_cache(context) -> dict:
 
 @asset(
     key=AssetKey(["qbn", "training_analysis"]),
-    deps=[AssetKey(["qbn", "cpt_cache"])],
+    deps=[
+        AssetKey(["qbn", "cpt_cache_structural"]),
+        AssetKey(["qbn", "cpt_cache_entry"]),
+        AssetKey(["qbn", "cpt_cache_position"]),
+    ],
     description="Post-processing: Analyse training run resultaten en genereer rapporten",
     metadata={
         "table_name": "N/A (generates reports only)",
@@ -644,6 +785,7 @@ def cpt_cache(context) -> dict:
         "data_volume": "low",
     },
     required_resource_keys={"postgres", "training_run_config"},
+    auto_materialize_policy=AutoMaterializePolicy.eager(),
 )
 def training_analysis(context) -> dict:
     """
@@ -653,7 +795,7 @@ def training_analysis(context) -> dict:
     Output: _validation/{timestamp}-pipeline_analysis-asset_{id}-{run_id}/
     """
     cfg = context.resources.training_run_config
-    run_id = _resolve_run_id(cfg)
+    run_id = _resolve_run_id(cfg, context)
 
     context.log.info(f"Starting pipeline analysis for run_id={run_id}, asset={cfg.asset_id}")
 
